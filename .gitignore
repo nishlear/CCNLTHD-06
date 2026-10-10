@@ -12,3 +12,5 @@ AGENTS.md
 CLAUDE.md
 # App data
 data/
+
+.DS_Store
