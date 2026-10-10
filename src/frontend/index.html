@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>JD Matching</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>JD Matching</h1>
+    <nav>
+      <button class="tab active" data-tab="cvs">CV</button>
+      <button class="tab" data-tab="search">Tìm kiếm</button>
+      <button class="tab" data-tab="history">Lịch sử</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- CVs -->
+    <section id="tab-cvs" class="panel active">
+      <form id="upload-form" class="card">
+        <label class="drop">
+          <input type="file" id="upload-input" accept="application/pdf" multiple>
+          <span id="upload-label">Chọn hoặc kéo thả các file CV (PDF)</span>
+        </label>
+        <button type="submit" class="primary">Tải lên</button>
+      </form>
+      <div class="row-between">
+        <h2>Danh sách CV</h2>
+        <select id="cv-filter">
+          <option value="">Tất cả</option>
+          <option value="ready">ready</option>
+          <option value="failed">failed</option>
+        </select>
+      </div>
+      <table>
+        <thead><tr><th>Tên</th><th>File</th><th>Kỹ năng</th><th>Năm KN</th><th>Trạng thái</th><th></th></tr></thead>
+        <tbody id="cv-rows"></tbody>
+      </table>
+    </section>
+
+    <!-- Search -->
+    <section id="tab-search" class="panel">
+      <form id="search-form" class="card">
+        <input id="search-query" placeholder='VD: "python developer, 3+ năm, biết FastAPI"' required>
+        <label class="topk">Top <input id="search-topk" type="number" min="1" max="20" value="10"></label>
+        <button type="submit" class="primary">Tìm</button>
+      </form>
+      <div id="search-view"></div>
+    </section>
+
+    <!-- History -->
+    <section id="tab-history" class="panel">
+      <h2>Các lượt tìm kiếm</h2>
+      <table>
+        <thead><tr><th>Truy vấn</th><th>Top</th><th>Trạng thái</th><th>Thời gian</th></tr></thead>
+        <tbody id="history-rows"></tbody>
+      </table>
+    </section>
+  </main>
+
+  <div id="toast" hidden></div>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,110 @@
+:root {
+  --bg: #f6f7f9;
+  --card: #fff;
+  --text: #1c1f24;
+  --muted: #6b7280;
+  --border: #e3e6ea;
+  --accent: #2f6fed;
+  --ok: #1a8f4e;
+  --warn: #b7791f;
+  --bad: #c53030;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14161a; --card: #1d2026; --text: #e6e8eb; --muted: #9aa1ab;
+    --border: #2d3139; --accent: #5b8cff; --ok: #3fbf7a; --warn: #e0a84a; --bad: #f06464;
+  }
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+header {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  padding: 12px 24px; background: var(--card); border-bottom: 1px solid var(--border);
+}
+h1 { font-size: 18px; margin: 0; }
+h2 { font-size: 15px; margin: 24px 0 8px; }
+nav { display: flex; gap: 4px; }
+main { max-width: 1100px; margin: 0 auto; padding: 20px 16px 60px; }
+
+button, input, select {
+  font: inherit; color: inherit; background: var(--card);
+  border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px;
+}
+button { cursor: pointer; }
+button:disabled { opacity: .5; cursor: default; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.link { border: none; background: none; color: var(--accent); padding: 0; }
+button.danger { color: var(--bad); }
+.tab { border-color: transparent; background: none; }
+.tab.active { background: var(--bg); border-color: var(--border); }
+
+.panel { display: none; }
+.panel.active { display: block; }
+.card {
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 12px;
+}
+.row-between { display: flex; justify-content: space-between; align-items: center; }
+
+.drop {
+  flex: 1; min-width: 220px; padding: 14px; border: 1px dashed var(--border);
+  border-radius: 6px; color: var(--muted); cursor: pointer; text-align: center;
+}
+.drop.over { border-color: var(--accent); color: var(--accent); }
+.drop input { display: none; }
+
+#search-query { flex: 1; min-width: 220px; }
+.topk input { width: 60px; margin-left: 4px; }
+
+table {
+  width: 100%; border-collapse: collapse; background: var(--card);
+  border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+}
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { font-weight: 600; color: var(--muted); font-size: 12px; }
+tr:last-child td { border-bottom: none; }
+tr.clickable { cursor: pointer; }
+tr.clickable:hover td { background: var(--bg); }
+.empty { color: var(--muted); text-align: center; padding: 20px; }
+.muted { color: var(--muted); }
+.err { color: var(--bad); font-size: 12px; }
+
+.badge {
+  display: inline-block; padding: 1px 8px; border-radius: 99px; font-size: 12px;
+  border: 1px solid currentColor;
+}
+.s-ready, .s-completed { color: var(--ok); }
+.s-failed { color: var(--bad); }
+.s-awaiting_review, .s-running { color: var(--warn); }
+
+.chip {
+  display: inline-block; margin: 1px 3px 1px 0; padding: 0 6px; border-radius: 4px;
+  background: var(--bg); border: 1px solid var(--border); font-size: 12px;
+}
+.chip.miss { color: var(--bad); text-decoration: line-through; }
+
+.score { font-variant-numeric: tabular-nums; font-weight: 600; }
+.bar { height: 4px; background: var(--border); border-radius: 2px; margin-top: 4px; width: 70px; }
+.bar > i { display: block; height: 100%; background: var(--accent); border-radius: 2px; }
+
+.meta { margin: 16px 0 8px; display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+.actions { margin-top: 12px; display: flex; gap: 8px; align-items: center; }
+.q-group { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; margin-top: 12px; }
+.q-group h3 { margin: 0 0 6px; font-size: 14px; }
+.q-group ul { margin: 4px 0 0; padding-left: 18px; }
+.cat { color: var(--muted); font-size: 12px; text-transform: uppercase; }
+
+#toast {
+  position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+  background: var(--text); color: var(--bg); padding: 8px 16px; border-radius: 6px;
+  max-width: calc(100% - 32px);
+}
+
+@media (max-width: 640px) {
+  header { padding: 12px 16px; flex-wrap: wrap; }
+  table { display: block; overflow-x: auto; }
+}
