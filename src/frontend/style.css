@@ -108,3 +108,12 @@ tr.clickable:hover td { background: var(--bg); }
   header { padding: 12px 16px; flex-wrap: wrap; }
   table { display: block; overflow-x: auto; }
 }
+
+dialog {
+  color: var(--text); background: var(--card); border: 1px solid var(--border);
+  border-radius: 10px; padding: 20px; width: min(620px, 90vw); max-height: 85vh;
+}
+dialog::backdrop { background: #0008; }
+dialog h2 { margin-top: 0; }
+dialog dt { color: var(--muted); margin-top: 12px; }
+dialog dd { margin-left: 0; white-space: pre-wrap; overflow-wrap: anywhere; }

@@ -23,6 +23,8 @@ CREATE TABLE IF NOT EXISTS cv (
     error TEXT,
     created_at TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS cv_created ON cv(created_at DESC, id);
+CREATE INDEX IF NOT EXISTS cv_status_created ON cv(status, created_at DESC, id);
 CREATE TABLE IF NOT EXISTS search (
     id TEXT PRIMARY KEY,
     query TEXT NOT NULL,
@@ -57,7 +59,7 @@ def now() -> str:
 
 @contextmanager
 def connect():
-    conn = sqlite3.connect(APP_DB_PATH)
+    conn = sqlite3.connect(APP_DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     try:
@@ -94,12 +96,13 @@ def save_cv(cv_id: str, file_name: str, status: str, *, raw_text: str | None = N
         )
 
 
-def list_cvs(status: str | None = None) -> list[dict]:
-    sql, args = "SELECT * FROM cv", ()
+def list_cvs(status: str | None = None, *, limit: int = 100, offset: int = 0) -> list[dict]:
+    sql = ("SELECT id, file_name, full_name, skills, years_experience, status, error, created_at FROM cv")
+    args = ()
     if status:
         sql, args = sql + " WHERE status = ?", (status,)
     with connect() as conn:
-        return [cv_row_to_dict(r) for r in conn.execute(sql + " ORDER BY created_at DESC", args)]
+        return [cv_row_to_dict(r) for r in conn.execute(sql + " ORDER BY created_at DESC, id LIMIT ? OFFSET ?", args + (limit, offset))]
 
 
 def get_cv(cv_id: str) -> dict | None:
@@ -179,6 +182,15 @@ def get_shortlist(search_id: str) -> list[dict]:
     return out
 
 
+def claim_review(search_id: str) -> bool:
+    """Atomically allow one request to resume this search."""
+    with connect() as conn:
+        return conn.execute(
+            "UPDATE search SET status = 'running' WHERE id = ? AND status = 'awaiting_review'",
+            (search_id,),
+        ).rowcount == 1
+
+
 def save_review(search_id: str, approved_ids: list[str], questions: list[dict]) -> None:
     with connect() as conn:
         conn.execute("UPDATE search_result SET approved = (cv_id IN (SELECT value FROM json_each(?)))"
@@ -187,11 +199,15 @@ def save_review(search_id: str, approved_ids: list[str], questions: list[dict]) 
             r["cv_id"]: r["id"] for r in conn.execute(
                 "SELECT id, cv_id FROM search_result WHERE search_id = ?", (search_id,))
         }
+        conn.execute(
+            "DELETE FROM interview_question WHERE search_result_id IN "
+            "(SELECT id FROM search_result WHERE search_id = ?)", (search_id,))
         conn.executemany(
             "INSERT INTO interview_question (search_result_id, category, question) VALUES (?,?,?)",
             [(result_ids[q["cv_id"]], q["category"], q["question"])
-             for q in questions if q["cv_id"] in result_ids],
+             for q in questions if q["cv_id"] in result_ids and q["cv_id"] in approved_ids],
         )
+        conn.execute("UPDATE search SET status = 'completed' WHERE id = ?", (search_id,))
 
 
 def get_questions(search_id: str) -> list[dict]:

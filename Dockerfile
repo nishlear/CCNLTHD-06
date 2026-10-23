@@ -5,7 +5,7 @@ ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy DATA_DIR=/app/data
 
 # Install deps first so this layer is cached when only code changes
 COPY pyproject.toml uv.lock ./
-RUN uv sync --locked --no-install-project --no-dev
+RUN uv sync --no-install-project --no-dev
 
 COPY src ./src
 

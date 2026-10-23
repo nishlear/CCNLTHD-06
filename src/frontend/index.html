@@ -38,12 +38,17 @@
         <thead><tr><th>Tên</th><th>File</th><th>Kỹ năng</th><th>Năm KN</th><th>Trạng thái</th><th></th></tr></thead>
         <tbody id="cv-rows"></tbody>
       </table>
+      <div class="row-between actions">
+        <button id="cv-prev" disabled>Trang trước</button>
+        <span id="cv-page" class="muted"></span>
+        <button id="cv-next" disabled>Trang sau</button>
+      </div>
     </section>
 
     <!-- Search -->
     <section id="tab-search" class="panel">
       <form id="search-form" class="card">
-        <input id="search-query" placeholder='VD: "python developer, 3+ năm, biết FastAPI"' required>
+        <input id="search-query" maxlength="3000" placeholder='VD: "python developer, 3+ năm, biết FastAPI"' required>
         <label class="topk">Top <input id="search-topk" type="number" min="1" max="20" value="10"></label>
         <button type="submit" class="primary">Tìm</button>
       </form>
@@ -60,6 +65,10 @@
     </section>
   </main>
 
+  <dialog id="cv-dialog" aria-labelledby="cv-detail-title">
+    <div class="row-between"><h2 id="cv-detail-title">Chi tiết CV</h2><button id="close-cv">Đóng</button></div>
+    <div id="cv-detail"></div>
+  </dialog>
   <div id="toast" hidden></div>
   <script src="app.js"></script>
 </body>
