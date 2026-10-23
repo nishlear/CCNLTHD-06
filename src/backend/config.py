@@ -10,20 +10,52 @@ UPLOAD_DIR = DATA_DIR / "uploads"
 APP_DB_PATH = Path(os.getenv("APP_DB_PATH", DATA_DIR / "app.db"))
 CHECKPOINT_DB_PATH = Path(os.getenv("CHECKPOINT_DB_PATH", DATA_DIR / "checkpoints.db"))
 CHROMA_DIR = Path(os.getenv("CHROMA_DIR", DATA_DIR / "chroma"))
-GEMINI_CHAT_MODEL = os.getenv("GEMINI_CHAT_MODEL", "gemini-3.8-flash")
-GEMINI_EMBEDDING_MODEL = os.getenv("GEMINI_EMBEDDING_MODEL", "gemini-embedding-2").removeprefix("models/")
-GEMINI_EMBEDDING_DIMENSIONS = int(os.getenv("GEMINI_EMBEDDING_DIMENSIONS", "768"))
-GEMINI_TIMEOUT_SECONDS = float(os.getenv("GEMINI_TIMEOUT_SECONDS", "30"))
+# ---- Fixed dual-model baseline (Rule 1.1) ----
+# Exactly one cloud chat model, one local chat model and one embedding model.
+PRIMARY_CHAT_MODEL = "gemini-3.5-flash-lite"
+FALLBACK_CHAT_MODEL = "qwen2.5:3b"
+EMBEDDING_MODEL = "gemini-embedding-2"
+EMBEDDING_DIMENSIONS = 768
+
+GEMINI_CHAT_MODEL = os.getenv("GEMINI_CHAT_MODEL", PRIMARY_CHAT_MODEL).removeprefix("models/")
+GEMINI_EMBEDDING_MODEL = os.getenv("GEMINI_EMBEDDING_MODEL", EMBEDDING_MODEL).removeprefix("models/")
+GEMINI_EMBEDDING_DIMENSIONS = int(os.getenv("GEMINI_EMBEDDING_DIMENSIONS", str(EMBEDDING_DIMENSIONS)))
+GEMINI_TIMEOUT_SECONDS = float(os.getenv("GEMINI_TIMEOUT_SECONDS", "60"))
 GEMINI_MAX_RETRIES = int(os.getenv("GEMINI_MAX_RETRIES", "1"))
+OLLAMA_CHAT_MODEL = os.getenv("OLLAMA_CHAT_MODEL", FALLBACK_CHAT_MODEL)
 _default_collection = f"cv_{GEMINI_EMBEDDING_MODEL.replace('-', '_')}_{GEMINI_EMBEDDING_DIMENSIONS}_v1"
 CHROMA_COLLECTION = os.getenv("CHROMA_COLLECTION", _default_collection)
 
-if GEMINI_EMBEDDING_MODEL not in {"gemini-embedding-2", "gemini-embedding-001"}:
-    raise ValueError("Use gemini-embedding-2 or gemini-embedding-001 for embeddings")
-if not 128 <= GEMINI_EMBEDDING_DIMENSIONS <= 3072:
-    raise ValueError("GEMINI_EMBEDDING_DIMENSIONS must be 128..3072")
+if GEMINI_CHAT_MODEL != PRIMARY_CHAT_MODEL:
+    raise ValueError(f"GEMINI_CHAT_MODEL is pinned to {PRIMARY_CHAT_MODEL}")
+if OLLAMA_CHAT_MODEL != FALLBACK_CHAT_MODEL:
+    raise ValueError(f"OLLAMA_CHAT_MODEL is pinned to {FALLBACK_CHAT_MODEL}")
+if GEMINI_EMBEDDING_MODEL != EMBEDDING_MODEL or GEMINI_EMBEDDING_DIMENSIONS != EMBEDDING_DIMENSIONS:
+    raise ValueError(f"Embeddings are pinned to {EMBEDDING_MODEL} with {EMBEDDING_DIMENSIONS} dimensions")
 if GEMINI_TIMEOUT_SECONDS <= 0 or GEMINI_MAX_RETRIES < 0:
     raise ValueError("Gemini timeout must be positive and retries nonnegative")
+
+# ---- Local fallback (Rule 1.2): keep qwen2.5:3b resident, bounded context ----
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
+OLLAMA_KEEP_ALIVE = os.getenv("OLLAMA_KEEP_ALIVE", "30m")
+OLLAMA_NUM_CTX = int(os.getenv("OLLAMA_NUM_CTX", "4096"))
+OLLAMA_TIMEOUT_SECONDS = float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "180"))
+TEMPERATURE = 0.0
+
+# ---- Token / pacing budget (Rules 2.x, 3.x) ----
+GEMINI_MAX_RPM = int(os.getenv("GEMINI_MAX_RPM", "12"))
+# One cap for both providers so the shared prompt always fits in OLLAMA_NUM_CTX.
+LLM_INPUT_MAX_CHARS = int(os.getenv("LLM_INPUT_MAX_CHARS", "8000"))
+EMBED_TEXT_MAX_WORDS = 300
+EMBED_BACKOFF_SECONDS = (10, 20, 40)
+EMBED_BACKOFF_JITTER = (1.0, 3.0)
+RECOMMENDED_BATCH_LIMIT = (20, 50)
+
+if not 1 <= GEMINI_MAX_RPM <= 60:
+    raise ValueError("GEMINI_MAX_RPM must be 1..60")
+if OLLAMA_NUM_CTX < 2048 or LLM_INPUT_MAX_CHARS < 1000:
+    raise ValueError("OLLAMA_NUM_CTX must be >= 2048 and LLM_INPUT_MAX_CHARS >= 1000")
+
 RETRIEVE_K = 20
 DEFAULT_TOP_K = 10
 MAX_TOP_K = 20

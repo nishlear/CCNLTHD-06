@@ -14,7 +14,8 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "APP_DB_PATH", tmp_path / "app.db")
     config.UPLOAD_DIR.mkdir()
     services.collection.cache_clear()
-    services.chat_model.cache_clear()
+    services.chat_client.cache_clear()
+    services.gemini_pacer.cache_clear()
     services.embeddings.cache_clear()
     db.init_db()
     yield tmp_path

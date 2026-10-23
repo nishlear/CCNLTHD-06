@@ -37,7 +37,7 @@ def main():
     names = ("fastapi", "langgraph", "langchain_google_genai", "chromadb", "pypdf", "dotenv", "pytest", "httpx")
     installed = {name: importlib.util.find_spec(name) is not None for name in names}
     key = gemini_api_key()
-    model = os.getenv("GEMINI_CHAT_MODEL", "gemini-3.8-flash").removeprefix("models/")
+    model = os.getenv("GEMINI_CHAT_MODEL", "gemini-3.5-flash-lite").removeprefix("models/")
     from urllib.parse import quote
     report = {"dependencies_installed": installed,
               "api_key_configured": bool(key),

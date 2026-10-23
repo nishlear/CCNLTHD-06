@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS cv (
     full_name TEXT,
     email TEXT,
     phone TEXT,
+    role TEXT,
     years_experience REAL,
     skills TEXT NOT NULL DEFAULT '[]',
     education TEXT,
@@ -72,6 +73,10 @@ def connect():
 def init_db() -> None:
     with connect() as conn:
         conn.executescript(SCHEMA)
+        # Migrate databases created before the role field existed.
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(cv)")}
+        if "role" not in columns:
+            conn.execute("ALTER TABLE cv ADD COLUMN role TEXT")
 
 
 # ---- CV ----
@@ -87,12 +92,12 @@ def save_cv(cv_id: str, file_name: str, status: str, *, raw_text: str | None = N
     e = extracted or {}
     with connect() as conn:
         conn.execute(
-            """INSERT OR REPLACE INTO cv (id, file_name, raw_text, full_name, email, phone,
+            """INSERT OR REPLACE INTO cv (id, file_name, raw_text, full_name, email, phone, role,
                years_experience, skills, education, summary, status, error, created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (cv_id, file_name, raw_text, e.get("full_name"), e.get("email"), e.get("phone"),
-             e.get("years_experience"), json.dumps(e.get("skills", [])), e.get("education"),
-             e.get("summary"), status, error, now()),
+             e.get("role"), e.get("years_experience"), json.dumps(e.get("skills") or []),
+             e.get("education"), e.get("summary"), status, error, now()),
         )
 
 

@@ -18,7 +18,8 @@ class GeminiModelCheckTests(unittest.TestCase):
         response.status = 200
         response.headers = {"x-request-id": "fixture-request-id"}
         with patch("scripts.check_gemini_model.urllib.request.urlopen", return_value=response) as call:
-            report = check_model("gemini-3.8-flash", "test-only-secret")
+            report = check_model("gemini-3.8-flash", "test-only-secret", timeout_seconds=60)
+        self.assertEqual(call.call_args.kwargs["timeout"], 60)
         request = call.call_args.args[0]
         payload = json.loads(request.data)
         self.assertEqual(payload["contents"][0]["parts"][0]["text"], "Reply with exactly MODEL_OK")
@@ -50,3 +51,17 @@ class GeminiModelCheckTests(unittest.TestCase):
         response.headers = {}
         with patch("scripts.check_gemini_model.urllib.request.urlopen", return_value=response):
             self.assertEqual(check_model("gemini-3.8-flash", "test-key")["status"], "blocked_or_incomplete_response")
+
+    def test_timeout_is_not_inference_success_and_does_not_expose_key(self):
+        with patch("scripts.check_gemini_model.urllib.request.urlopen", side_effect=TimeoutError()):
+            report = check_model("gemini-3.8-flash", "test-only-secret", timeout_seconds=60)
+        self.assertEqual(report["status"], "network_error")
+        self.assertEqual(report["error_type"], "TimeoutError")
+        self.assertEqual(report["timeout_seconds"], 60)
+        self.assertNotIn("test-only-secret", json.dumps(report))
+
+    def test_invalid_timeout_never_sends_a_request(self):
+        with patch("scripts.check_gemini_model.urllib.request.urlopen") as call:
+            for timeout in (0, -1, float("nan"), float("inf")):
+                self.assertEqual(check_model("gemini-3.8-flash", "test-key", timeout)["status"], "invalid_timeout")
+            call.assert_not_called()

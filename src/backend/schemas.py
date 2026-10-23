@@ -1,5 +1,6 @@
 """Shared models (design 11.3.1) and API request/response bodies (11.3.5)."""
 
+import re
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -9,12 +10,67 @@ from .config import DEFAULT_TOP_K, MAX_TOP_K
 
 # ---- Shared models ----
 
+def _clean_skill_list(values) -> list[str]:
+    if isinstance(values, str):
+        values = values.split(",")
+    if not isinstance(values, list):
+        return []
+    return list(dict.fromkeys(str(v).strip() for v in values if v is not None and str(v).strip()))
+
+
+class CVExtract(BaseModel):
+    """Unified LLM output contract (Rules 1.3, 2.3): identical for Gemini and Ollama.
+
+    Short keys keep output tokens low. Validators are lenient because the local
+    fallback model may emit strings like "5+" or a comma-joined skill list.
+    """
+    model_config = ConfigDict(str_strip_whitespace=True, allow_inf_nan=False, extra="ignore")
+
+    name: str = ""
+    role: str = ""
+    skills: list[str] = Field(default_factory=list)
+    exp_yrs: float | None = Field(None, ge=0, le=70)
+    edu: str = ""
+    summary: str = ""
+
+    @field_validator("name", "role", "edu", "summary", mode="before")
+    @classmethod
+    def coerce_text(cls, value):
+        if value is None:
+            return ""
+        if isinstance(value, list):
+            return ", ".join(str(v) for v in value if v is not None)
+        return str(value)
+
+    @field_validator("skills", mode="before")
+    @classmethod
+    def coerce_skills(cls, values):
+        return _clean_skill_list(values)
+
+    @field_validator("exp_yrs", mode="before")
+    @classmethod
+    def coerce_years(cls, value):
+        if value is None or isinstance(value, bool):
+            return None
+        if not isinstance(value, (int, float)):
+            match = re.search(r"\d+(?:[.,]\d+)?", str(value))
+            value = float(match.group().replace(",", ".")) if match else None
+        return value if value is not None and 0 <= value <= 70 else None
+
+    def to_record(self) -> dict:
+        """Map the compact contract to the storage/record keys used downstream."""
+        return {"full_name": self.name, "role": self.role or None, "skills": self.skills,
+                "years_experience": self.exp_yrs, "education": self.edu or None,
+                "summary": self.summary or None}
+
+
 class CVExtraction(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, allow_inf_nan=False)
 
     full_name: str
     email: str | None = None
     phone: str | None = None
+    role: str | None = None
     years_experience: float | None = Field(None, ge=0)
     skills: list[str]
 
@@ -80,6 +136,7 @@ class CVListItem(CVSummary):
 class CVDetail(CVListItem):
     email: str | None
     phone: str | None
+    role: str | None = None
     education: str | None
     summary: str | None
 

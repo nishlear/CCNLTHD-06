@@ -78,10 +78,19 @@ def test_embedding_model_change_requires_new_collection(isolated, monkeypatch):
         services.collection()
 
 
+def test_only_compact_format_vectors_count_as_indexed(isolated, monkeypatch):
+    monkeypatch.setattr(services, "embeddings", lambda: FixtureEmbeddings())
+    services.collection().upsert(ids=["legacy"], embeddings=[[1., 0., 0.]])
+    assert services.has_vector("legacy") is False
+    services.index_cv("legacy", {"role": "Dev", "skills": ["Python"]})
+    assert services.has_vector("legacy") is True
+    assert services.has_vector("missing") is False
+
+
 def test_pdf_to_review_api_with_real_vector_store(client, monkeypatch):
     monkeypatch.setattr(services, "embeddings", lambda: FixtureEmbeddings())
-    monkeypatch.setattr(services, "extract_cv", lambda text, missing: {
-        "full_name": "Candidate A", "skills": ["Python", "FastAPI"], "years_experience": 4})
+    monkeypatch.setattr(services, "extract_cv", lambda text, missing: ({
+        "full_name": "Candidate A", "skills": ["Python", "FastAPI"], "years_experience": 4}, "gemini"))
     response = client.post("/cvs", files=[("files", ("cv.pdf", pdf_bytes(), "application/pdf")),
                                          ("files", ("broken.pdf", b"not a PDF", "application/pdf"))])
     assert response.status_code == 200

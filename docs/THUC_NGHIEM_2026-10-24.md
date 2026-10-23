@@ -116,24 +116,85 @@ Drushchak & Romanyshyn (2024), Introducing the Djinni Recruitment Dataset: A Cor
 
 ### 
 
-## **12.9 Chuyển nhà cung cấp API sang Google Gemini** {#12.9-chuyển-nhà-cung-cấp-api-sang-google-gemini}
+## **12.9 Chuyển nhà cung cấp API sang Google Gemini**
 
 Cập nhật ngày 24/10/2026 sau lượt thực nghiệm trên: cấu hình hiện hành đã chuyển từ OpenAI sang Gemini. Mục này thay thế thông tin nhà cung cấp hiện hành ở mục 12.1. Các kết quả FTS5 và nhật ký pilot OpenAI ở mục 12.6 được giữ theo đúng lượt đo cũ, không được diễn giải lại thành kết quả Gemini.
 
-| Thành phần | Cấu hình / trạng thái mới |
+Sau khi người dùng bổ sung khóa, đã thực thi kiểm tra model, kiểm tra môi trường, cập nhật phụ thuộc và khởi động pilot 100 hồ sơ. Khóa đã được nhận diện nhưng kết nối DNS của terminal thực thi vẫn lỗi. Chưa thể kết luận khóa hợp lệ hoặc model đã chạy thành công.
+
+| Thành phần | Cấu hình / trạng thái hiện tại |
 | :---- | :---- |
-| Model tác vụ cấu trúc | gemini-3.8-flash; Gemini Developer API; native JSON schema |
-| Embedding | gemini-embedding-2; 768 chiều; chuẩn hóa vector; tiền tố riêng cho query và document |
+| Model tác vụ cấu trúc | Cấu hình gemini-3.8-flash; Gemini Developer API; native JSON schema |
+| Embedding | Cấu hình gemini-embedding-2; 768 chiều; chuẩn hóa vector; tiền tố riêng cho query và document |
 | Thư viện khai báo | langchain-google-genai \>=4.4.2,\<5 và google-genai \>=2.20,\<3; chưa cài thành công trong terminal này |
-| Xác thực | GEMINI\_API\_KEY hoặc GOOGLE\_API\_KEY từ Google AI Studio; không dùng OpenAI key |
+| Xác thực | Đã phát hiện GEMINI\_API\_KEY hoặc GOOGLE\_API\_KEY; chưa xác thực được với Google; không ghi giá trị khóa |
 | Collection mặc định | cv\_gemini\_embedding\_2\_768\_v1; kiểm tra provider/model/số chiều/định dạng; không trộn vector cũ |
-| Kiểm tra model | python \-m scripts.check\_gemini\_model; lưu data/benchmarks/gemini-model-check.json |
-| Kết quả kiểm thử | 32 unittest Python và 4 kiểm thử Node đạt; các biên API dùng test double |
-| Trạng thái gọi Gemini thật | missing\_api\_key; 0 request được gửi trong lần kiểm tra này |
-| Cập nhật phụ thuộc / uv.lock | Đã thử uv sync; còn bị chặn bởi DNS 11001 khi truy cập PyPI |
+| Kiểm thử đã ghi nhận | 32 unittest Python và 4 kiểm thử Node đạt trong lượt chuyển đổi; các biên API dùng test double |
+| Gọi Gemini sau khi cài khóa | Đã thử generateContent 1 lần lúc 19:35:14 UTC ngày 23/10/2026 (02:35:14 ngày 24/10, UTC+7); network\_error, gaierror, mã 11001 |
+| Kết nối PyPI / thư viện | uv sync \--upgrade \--extra research thất bại do DNS 11001 tại pypi.org; uv.lock chưa cập nhật |
+| Pilot Gemini 100 hồ sơ | Bị chặn trước xử lý vì thiếu phụ thuộc; processed/ready/failed \= 0/0/0; chưa gửi CV hoặc gọi embedding |
+| Phản hồi, token và độ trễ model | Chưa có phản hồi HTTP từ Google; chưa đo token, chi phí, độ trễ hay chất lượng model |
+
+DNS 11001 xảy ra trước khi thiết lập kết nối HTTP tới generativelanguage.googleapis.com. Số 1 ở trên là số lần thử inference; không phải một phản hồi model thành công. Thời gian 24.243 ms trong file kiểm tra là thời gian gặp lỗi mạng, không phải độ trễ suy luận. Pilot dừng trước xử lý nên 0/100 không phải tỷ lệ thành công hay thất bại của CV.
 
 Importer giữ bước lọc liên hệ trước khi gửi CV tới Gemini. Hàng ready chỉ được tái sử dụng nếu văn bản khớp và có vector trong collection hiện tại; vì vậy các hàng đã index bằng nhà cung cấp cũ không bị bỏ qua nhầm. Ngưỡng similarity 0.55 vẫn là tham số thực nghiệm và cần hiệu chỉnh trên embedding Gemini.
 
-Cần điền Google key vào .env, chạy kiểm tra model, rồi chạy scripts/run-real-data.ps1 \-Limit 100 để thu phản hồi, usage và độ trễ thật. Chưa có bằng chứng extraction, embedding hoặc workflow CV với Gemini thật; pytest tích hợp cũng chưa chạy do thiếu phụ thuộc. Nhật ký kiểm chứng chuyển đổi: data/benchmarks/gemini-migration-checks.json.
+Khi terminal có thể truy cập PyPI và Google API, chạy scripts/run-real-data.ps1 \-Limit 100 để cài phụ thuộc, kiểm thử tích hợp, xác thực kết nối, kiểm tra inference rồi chạy pilot. Hiện chưa có bằng chứng extraction, embedding hoặc workflow CV với Gemini thật; pytest tích hợp cũng chưa chạy do thiếu phụ thuộc.
+
+Minh chứng lượt thực thi sau khi cài khóa: data/benchmarks/gemini-execution-20261024.json; gemini-model-check.json và runtime-check.json trong cùng thư mục. Nhật ký kiểm chứng chuyển đổi: data/benchmarks/gemini-migration-checks.json. Không có giá trị khóa API hoặc nội dung CV trong các báo cáo trạng thái này.
 
 Nguồn: https\://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash ; https\://ai.google.dev/gemini-api/docs/embeddings ; https\://pypi.org/project/langchain-google-genai/4.4.2/
+
+## **12.10 Minh chứng gọi Google Gemini thật thành công** {#12.10-minh-chứng-gọi-google-gemini-thật-thành-công}
+
+Người dùng đã chạy SDK Google trong PowerShell thông thường và nhận phản hồi model thật. Kết quả được đối chiếu với file JSON trong repository. Cấu hình hiện hành chuyển sang gemini-3.5-flash-lite, timeout 60 giây; trạng thái này cập nhật các hạn chế kết nối và cấu hình cũ ghi ở mục 12.9.
+
+| Chỉ số | Giá trị quan sát |
+| :---- | :---- |
+| Model yêu cầu / trả về | gemini-3.5-flash-lite / gemini-3.5-flash-lite |
+| Thời điểm bắt đầu UTC | 2026-10-23T20:20:03.898624+00:00 |
+| Trạng thái / finish reason | succeeded / STOP |
+| Số lần thử inference | 1; tắt retry tự động |
+| Phản hồi nhìn thấy | MODEL\_OK; expected\_output\_match \= true |
+| Response ID | dcHbavzuN4qdjuMP4IHwwQU |
+| Token input / output nhìn thấy | 7 / 3 |
+| Token thinking / tổng cộng | 55 / 65 |
+| Thời gian phép kiểm tra | 1.915,83 ms, tương đương khoảng 1,916 giây |
+| Số hồ sơ CV đã gửi | 0 |
+
+Bảng 12.6 Kết quả một phép gọi generateContent thật với prompt “Reply with exactly MODEL\_OK”. Thời gian gồm khởi tạo SDK/client và request; không phải thời gian suy luận thuần. Một mẫu không đủ tính p50/p95 hoặc so sánh chất lượng model. Token thinking chỉ ghi số đếm, không ghi nội dung suy nghĩ.
+
+Đã cài google-genai 2.33.0, langchain-google-genai 4.4.2, LangGraph 1.2.16 và Chroma 1.5.9; uv.lock đã được tạo lại. Kiểm tra sau đổi cấu hình: 50 passed, 8 subtests passed trong 5,01 giây. Các biên model ở bộ kiểm thử dùng test double; bộ kiểm thử API đầy đủ chưa hoàn tất trong phiên thực thi tự động.
+
+Chưa có kết quả embedding Gemini, trích xuất CV, semantic search hoặc review với dữ liệu thật. Pilot 100 hồ sơ trong phiên tự động dừng trước xử lý do DNS 11001, processed \= 0; đây không phải tỷ lệ thất bại của CV. Chi phí API và chất lượng tuyển dụng chưa được đo.
+
+Tái lập: uv run \--no-sync python \-m scripts.check\_gemini\_model \--transport sdk \--model gemini-3.5-flash-lite \--timeout 60\. Sau đó chạy scripts/run-real-data.ps1 \-Limit 100 trong PowerShell có kết nối hoạt động.
+
+Minh chứng: data/benchmarks/gemini-flash-lite-check.json và data/benchmarks/gemini-success-evidence-20261024.json. Các phép thử gemini-3.8-flash trước đó bị timeout/504 được giữ nguyên trong nhật ký; không được diễn giải thành lượt inference thành công.
+
+Nguồn model: https\://ai.google.dev/gemini-api/docs/models/gemini-3.5-flash-lite
+
+## **12.11 Pilot 20 hồ sơ thật với Gemini**
+
+Người dùng chạy scripts/run-real-data.ps1 \-Limit 20 trong PowerShell có kết nối hoạt động. JSON cuối, SQLite, Chroma và checkpoint được kiểm tra lại. Đã có bằng chứng trích xuất CV, embedding và tìm kiếm với dữ liệu thật, bổ sung cho phép gọi ngắn ở mục 12.10. Chat dùng gemini-3.5-flash-lite; embedding dùng gemini-embedding-2.
+
+| Hạng mục | Kết quả quan sát |
+| :---- | :---- |
+| Phạm vi lượt chạy | 20 hồ sơ đầu trong JSONL đã chuẩn bị; runner completed |
+| Xử lý mới trong lượt này | 5 hồ sơ; ready \= 5, failed \= 0 |
+| Tái sử dụng | 15 hồ sơ ready, có vector trong collection hiện tại |
+| Đối chiếu lưu trữ | 20/20 hồ sơ được chọn ready; đủ 20 vector, 768 chiều |
+| Thời gian runner | 7,658 giây; gồm xử lý mới, tái sử dụng và tìm kiếm |
+| Kết quả tìm kiếm | 10 hồ sơ xếp hạng; awaiting\_review |
+| Lọc liên hệ trên 20 hồ sơ đọc | 1 URL được thay thế ở 1 hồ sơ |
+| Kiểm thử trước pilot | 70 passed, 8 subtests passed; 5,50 giây trong PowerShell người dùng |
+
+Bảng 12.7 Kết quả pilot có tái sử dụng. Chỉ 5 hồ sơ được xử lý mới, không phải 20 hồ sơ mới. Thời gian 7,658 giây không gồm cập nhật thư viện, pytest, preflight hoặc kiểm tra checksum trước runner; không dùng để suy ra tốc độ xử lý 100.000 hồ sơ. Dòng running trên terminal là ảnh chụp trung gian; file cuối là completed.
+
+Truy vấn “Python developer, at least 3 years, FastAPI” được phân tích thành Python, FastAPI và kinh nghiệm tối thiểu 3 năm. Top 10 có điểm từ 0,249429 đến 0,492117; không hồ sơ nào đạt ngưỡng giải thích 0,5 nên chưa gọi bước giải thích. Checkpoint dừng tại human\_review, approval\_status \= pending, không có lỗi node; chưa duyệt hồ sơ hoặc tạo câu hỏi phỏng vấn.
+
+Kiểm tra model trước pilot: MODEL\_OK sau 1.577,336 ms, tổng 10 token. Đây là usage của phép kiểm tra ngắn, không phải token của 5 CV hoặc truy vấn tìm kiếm. Chưa thu thập token/chi phí toàn pilot, nhãn liên quan hay Precision@k/Recall@k. 70 kiểm thử đạt phản ánh logic kiểm thử có test double tại biên model, không phải độ chính xác trên CV.
+
+SQLite còn 60 bản ghi failed ngoài nhóm 20 hồ sơ được chọn; kết quả này không khẳng định toàn bộ dữ liệu ứng dụng không có lỗi. Search ID: edd6a99b380d426292266df10f7f0167, tạo lúc 2026-10-23T20:38:28Z. Collection: cv\_gemini\_embedding\_2\_768\_v1.
+
+Minh chứng cố định: data/benchmarks/pilot-20-results-20261024.json và pilot-20-verification-20261024.json. Runner đã được sửa để in báo cáo cuối ra terminal; 5 kiểm thử importer/lọc liên hệ chạy lại đều đạt. Bước duyệt và sinh câu hỏi vẫn chờ thao tác của người dùng.

@@ -47,10 +47,10 @@ All paths are relative to the working directory unless absolute.
 | Variable | Default | Purpose |
 |---|---|---|
 | `GEMINI_API_KEY` | unset | Required for new ingest/search operations |
-| `GEMINI_CHAT_MODEL` | `gemini-3.8-flash` | Structured extraction, criteria, explanations, questions |
+| `GEMINI_CHAT_MODEL` | `gemini-3.5-flash-lite` | Structured extraction, criteria, explanations, questions |
 | `GEMINI_EMBEDDING_MODEL` | `gemini-embedding-2` | Same model for index and queries |
 | `GEMINI_EMBEDDING_DIMENSIONS` | `768` | Vector size; changing it requires reindexing |
-| `GEMINI_TIMEOUT_SECONDS` | `30` | Timeout per provider request |
+| `GEMINI_TIMEOUT_SECONDS` | `60` | Timeout per provider request |
 | `GEMINI_MAX_RETRIES` | `1` | Provider retries, separate from graph attempts |
 | `DATA_DIR` | `data` | Application data directory |
 | `APP_DB_PATH` | `$DATA_DIR/app.db` | Business records |
@@ -118,6 +118,14 @@ python -m scripts.check_gemini_model
 ```
 
 This uses only Python's standard library, loads the existing `.env`, and attempts one short Gemini generateContent API request with the configured chat model. It sends no CVs. API quota and billing are managed through Google AI Studio / its Google Cloud project. The result is saved in `data/benchmarks/gemini-model-check.json`, including the returned model/version, response ID, provider usage, output and elapsed time when available. Only `status=succeeded` confirms a completed inference response; this check does not evaluate extraction or the CV workflow. HTTP error messages and keys are not logged.
+
+The check honors `GEMINI_TIMEOUT_SECONDS` from `.env`. To try a slower connection once, use `python -m scripts.check_gemini_model --timeout 60`. A socket timeout does not identify whether the delay occurred during connection, TLS, or reading a response, and does not validate the API key. Check DNS, TCP port 443 and an HTTPS response before treating the failure as model latency. The checker makes one attempt and does not automatically retry a timed-out inference.
+
+If curl HTTPS works but Python times out, run `python -m scripts.diagnose_gemini_connection`. It compares Python urllib and curl using the same HEAD and unauthenticated POST requests. It sends no API key or CVs; the POST is expected to return an authentication error, which only demonstrates HTTP reachability. The report in `data/benchmarks/gemini-connection-check.json` contains status codes, timings and proxy-presence flags, without proxy addresses, credentials or response bodies. Python urllib can discover Windows registry proxy settings as well as environment variables, so its route can differ from curl. The diagnostic does not change proxy settings, certificate verification or network configuration.
+
+Once PyPI works, install the actual project environment using `data/tools/uv.exe --cache-dir data/uv-cache sync --upgrade --extra research`. Always run installed application commands through `data/tools/uv.exe run --no-sync` so they use the project virtual environment. To compare the official SDK with the stdlib check, run `data/tools/uv.exe run --no-sync python -m scripts.check_gemini_model --transport sdk --timeout 60`. The SDK check explicitly uses the Gemini Developer API, the same short prompt, a timeout in milliseconds and one total attempt without automatic retry. A metadata HTTP 200 is not proof that inference or the CV workflow succeeded. The dataset runner now uses the SDK check after installing dependencies and passing tests, before sending any CVs.
+
+If the SDK reports HTTP 504 / DEADLINE_EXCEEDED, an API deadline was exceeded; it is not a completed model response. Google GenAI SDK 2.33 sets X-Server-Timeout from the configured timeout. To compare a lower-latency supported model once, add `--model gemini-3.5-flash-lite --transport sdk --timeout 60` to the model check. This CLI override does not change the application model; only update `GEMINI_CHAT_MODEL` in `.env` after the alternative model succeeds. Keep each attempt report separate with `--report`.
 
 After that succeeds, run `.\scripts\run-real-data.ps1 -Limit 100` for the actual dataset pilot.
 
