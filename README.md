@@ -153,3 +153,7 @@ See [docs/INGEST_RULES.md](docs/INGEST_RULES.md) for the rule-by-rule audit, two
 Install the only local fallback model once with `ollama pull qwen2.5:3b`, and keep the Ollama server running. The application never requests another local model. Each local generation sends `format="json"`, temperature 0, context 4096 and `keep_alive="30m"` (or `-1`). Local generations are serialized within each app process. Docker needs an Ollama URL reachable from inside the container, such as `http://host.docker.internal:11434` for an Ollama server on the Windows host.
 
 Embedding rate limits use three waits of 10/20/40 seconds plus 1..3 seconds of random jitter. No local embedding fallback is used. Chat and embedding quotas remain provider-controlled and are not transferred between models. Keep `app.db`, `app.ingest.lock` (while running) and Chroma on the same host for coordination; separate databases do not share pacing or phase locks.
+
+## Quyết định bàn giao
+
+Điểm là xếp hạng ưu tiên mềm, không phải bộ lọc điều kiện bắt buộc. API/UI dùng outcome để phân biệt succeeded, completed_with_errors, failed và pending; status completed chỉ cho biết workflow đã kết thúc. Xem docs/DOI_CHIEU_BAN_GIAO.md và lab labs/state_checkpoint. Không mở ingest toàn corpus; mỗi pilot giữ 20 CV.

@@ -169,7 +169,18 @@ class ShortlistItem(BaseModel):
     approved: bool | None = None
 
 
-class SearchResponse(BaseModel):
+class SearchOutcomeFields(BaseModel):
+    outcome: Literal["pending", "succeeded", "completed_with_errors", "failed"] = "pending"
+    errors: list[dict] = Field(default_factory=list)
+    approved_count: int = 0
+    question_count: int = 0
+    expected_question_count: int = 0
+    incomplete_cv_ids: list[str] = Field(default_factory=list)
+    ranking_mode: Literal["soft_priority"] = "soft_priority"
+    hard_filters_applied: bool = False
+
+
+class SearchResponse(SearchOutcomeFields):
     id: str
     status: SearchStatus
     criteria: SearchCriteria | None
@@ -180,13 +191,13 @@ class ReviewRequest(BaseModel):
     approved_cv_ids: list[str]
 
 
-class ReviewResponse(BaseModel):
+class ReviewResponse(SearchOutcomeFields):
     id: str
     status: SearchStatus
     questions: list[Question]
 
 
-class SearchListItem(BaseModel):
+class SearchListItem(SearchOutcomeFields):
     id: str
     query: str
     top_k: int

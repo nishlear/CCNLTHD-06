@@ -62,3 +62,19 @@ test("CV pagination renders at most one page and enables next only when more row
   assert.equal(element("#cv-prev").disabled, true);
   assert.equal(element("#cv-page").textContent, "CV 1–100");
 });
+
+
+test("soft ranking and completed-with-errors are visible even with partial questions", async () => {
+  const { context, element } = frontend({ "/searches/s": {
+    id:"s", query:"dev 3 years",top_k:1,status:"completed",outcome:"completed_with_errors",
+    question_count:1,expected_question_count:6,errors:[{node:"explain",code:"TimeoutError"}],criteria:{},
+    questions:[{cv_id:"a",category:"technical",question:"Why?"}],
+    shortlist:[{cv_id:"a",full_name:"A",score:.9,rank:1,approved:true,matched_skills:[],missing_skills:[]}]
+  }});
+  await vm.runInContext("openSearch('s')",context);
+  const html=element("#search-view").innerHTML;
+  assert.match(html,/điểm cao chưa bảo đảm đạt mọi yêu cầu/);
+  assert.match(html,/Hoàn tất có lỗi/);
+  assert.match(html,/1\/6/);
+  assert.match(html,/TimeoutError/);
+});

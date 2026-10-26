@@ -117,3 +117,6 @@ dialog::backdrop { background: #0008; }
 dialog h2 { margin-top: 0; }
 dialog dt { color: var(--muted); margin-top: 12px; }
 dialog dd { margin-left: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.s-completed_with_errors { color: #ffbf47; }
+.s-succeeded { color: #65d99b; }

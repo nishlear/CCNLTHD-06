@@ -145,6 +145,12 @@ async function openSearch(id) {
   history.replaceState(null, "", `#search=${encodeURIComponent(id)}`);
 }
 
+function searchBadge(s) {
+  const labels = { succeeded: "Hoàn tất thành công", completed_with_errors: "Hoàn tất có lỗi", failed: "Thất bại" };
+  return s.outcome && labels[s.outcome]
+    ? `<span class="badge s-${esc(s.outcome)}">${esc(labels[s.outcome])}</span>` : badge(s.status);
+}
+
 function renderSearch(s) {
   const reviewing = s.status === "awaiting_review";
   const c = s.criteria || {};
@@ -168,7 +174,8 @@ function renderSearch(s) {
     </tr>`).join("");
 
   $("#search-view").innerHTML = `
-    <div class="meta">${badge(s.status)} ${crit}</div>
+    <div class="meta">${searchBadge(s)} ${crit}</div>
+    <p class="muted">Điểm dùng để xếp hạng ưu tiên; điểm cao chưa bảo đảm đạt mọi yêu cầu. Kinh nghiệm tối thiểu là điểm mềm. Ô chọn sẵn từ 0,5 cần được HR kiểm tra lại.</p>
     ${s.shortlist.length ? `
       <table>
         <thead><tr><th>${reviewing ? "Giữ" : "Duyệt"}</th><th>#</th><th>Ứng viên</th><th>Điểm</th><th>Kỹ năng</th><th>Lý do</th></tr></thead>
@@ -219,12 +226,14 @@ async function submitReview(id) {
 async function loadHistory() {
   try {
     const list = await api("/searches");
+    const counts = list.reduce((out, row) => { out[row.outcome || "pending"] = (out[row.outcome || "pending"] || 0) + 1; return out; }, {});
+    $("#history-summary").textContent = `Thành công: ${counts.succeeded || 0} · Hoàn tất có lỗi: ${counts.completed_with_errors || 0} · Thất bại: ${counts.failed || 0} · Đang xử lý/chờ duyệt: ${counts.pending || 0}`;
     $("#history-rows").innerHTML = list.length
       ? list.map((s) => `
         <tr class="clickable" data-id="${s.id}">
           <td>${esc(s.query)}</td>
           <td>${s.top_k}</td>
-          <td>${badge(s.status)}</td>
+          <td>${searchBadge(s)}</td>
           <td class="muted">${new Date(s.created_at).toLocaleString()}</td>
         </tr>`).join("")
       : `<tr><td colspan="4" class="empty">Chưa có lượt tìm kiếm nào</td></tr>`;
@@ -240,9 +249,12 @@ function renderQuestionStatus(search) {
   if (search.status !== "completed") return "";
   const generated = new Set((search.questions || []).map((q) => q.cv_id));
   const missing = search.shortlist.filter((r) => r.approved && !generated.has(r.cv_id));
-  return missing.length
-    ? `<p class="err">Chưa tạo được câu hỏi cho: ${missing.map((r) => esc(r.full_name || r.cv_id)).join(", ")}.</p>`
-    : "";
+  const missingMessage = missing.length
+    ? `<p class="err">Chưa tạo được câu hỏi cho: ${missing.map((r) => esc(r.full_name || r.cv_id)).join(", ")}.</p>` : "";
+  const warning = s => s.outcome === "completed_with_errors" || (s.errors || []).length;
+  const details = (search.errors || []).map(e => `${esc(e.node)}: ${esc(e.code)}`).join("; ");
+  return missingMessage + (warning(search)
+    ? `<p class="err">Hoàn tất có lỗi. Câu hỏi: ${esc(search.question_count ?? (search.questions || []).length)}/${esc(search.expected_question_count ?? "—")}. ${details}</p>` : "");
 }
 
 async function openCV(id) {

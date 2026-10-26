@@ -155,7 +155,7 @@ def start_search(search_id: str, query: str, top_k: int) -> dict:
                                "approval_status": "pending", "questions": [], "errors": []},
                               graph_config(search_id))
     return {"paused": bool(result.get("__interrupt__")), "criteria": result["criteria"],
-            "shortlist": result["shortlist"], "explanations": result["explanations"]}
+            "shortlist": result["shortlist"], "explanations": result["explanations"], "errors": result.get("errors", [])}
 
 
 def resume_search(search_id: str, approved_cv_ids: list[str]) -> list[dict]:
@@ -177,3 +177,12 @@ def resume_search(search_id: str, approved_cv_ids: list[str]) -> list[dict]:
             result = graph.invoke(Command(resume={"approved_cv_ids": approved}), cfg)
     order = {r["cv_id"]: i for i, r in enumerate(result["shortlist"])}
     return sorted(result["questions"], key=lambda q: order[q["cv_id"]])
+
+
+def read_errors(search_id: str) -> list[dict]:
+    """Recover historical errors using the same persistent thread, without resuming."""
+    with persistent_graph() as graph:
+        state = graph.get_state(graph_config(search_id))
+    if not state.values:
+        return [{"node": "checkpoint", "code": "HISTORICAL_ERRORS_UNAVAILABLE"}]
+    return state.values.get("errors") or []

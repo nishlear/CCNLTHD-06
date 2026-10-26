@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS search (
     id TEXT PRIMARY KEY,
     query TEXT NOT NULL,
     criteria TEXT,
+    errors TEXT,
     top_k INTEGER NOT NULL,
     status TEXT NOT NULL,
     created_at TEXT NOT NULL
@@ -88,6 +89,9 @@ def init_db() -> None:
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(cv)")}
         if "role" not in columns:
             conn.execute("ALTER TABLE cv ADD COLUMN role TEXT")
+        search_columns = {row["name"] for row in conn.execute("PRAGMA table_info(search)")}
+        if "errors" not in search_columns:
+            conn.execute("ALTER TABLE search ADD COLUMN errors TEXT")
 
 
 # ---- CV ----
@@ -143,13 +147,15 @@ def create_search(search_id: str, query: str, top_k: int) -> None:
         )
 
 
-def update_search(search_id: str, *, status: str, criteria: dict | None = None) -> None:
+def update_search(search_id: str, *, status: str, criteria: dict | None = None, errors: list[dict] | None = None) -> None:
     with connect() as conn:
         if criteria is not None:
             conn.execute("UPDATE search SET status = ?, criteria = ? WHERE id = ?",
                          (status, json.dumps(criteria), search_id))
         else:
             conn.execute("UPDATE search SET status = ? WHERE id = ?", (status, search_id))
+        if errors is not None:
+            conn.execute("UPDATE search SET errors = ? WHERE id = ?", (json.dumps(errors), search_id))
 
 
 def get_search(search_id: str) -> dict | None:
@@ -159,13 +165,14 @@ def get_search(search_id: str) -> dict | None:
         return None
     d = dict(row)
     d["criteria"] = json.loads(d["criteria"]) if d["criteria"] else None
+    d["errors"] = json.loads(d["errors"]) if d.get("errors") is not None else None
     return d
 
 
 def list_searches() -> list[dict]:
     with connect() as conn:
         rows = conn.execute(
-            "SELECT id, query, top_k, status, created_at FROM search ORDER BY created_at DESC")
+            "SELECT id, query, top_k, status, created_at FROM search ORDER BY created_at DESC, id DESC")
         return [dict(r) for r in rows]
 
 
@@ -208,7 +215,7 @@ def claim_review(search_id: str) -> bool:
         ).rowcount == 1
 
 
-def save_review(search_id: str, approved_ids: list[str], questions: list[dict]) -> None:
+def save_review(search_id: str, approved_ids: list[str], questions: list[dict], *, errors: list[dict] | None = None) -> None:
     with connect() as conn:
         conn.execute("UPDATE search_result SET approved = (cv_id IN (SELECT value FROM json_each(?)))"
                      " WHERE search_id = ?", (json.dumps(approved_ids), search_id))
@@ -225,6 +232,8 @@ def save_review(search_id: str, approved_ids: list[str], questions: list[dict]) 
              for q in questions if q["cv_id"] in result_ids and q["cv_id"] in approved_ids],
         )
         conn.execute("UPDATE search SET status = 'completed' WHERE id = ?", (search_id,))
+        if errors is not None:
+            conn.execute("UPDATE search SET errors = ? WHERE id = ?", (json.dumps(errors), search_id))
 
 
 def get_questions(search_id: str) -> list[dict]:
