@@ -32,6 +32,8 @@ if OLLAMA_CHAT_MODEL != FALLBACK_CHAT_MODEL:
     raise ValueError(f"OLLAMA_CHAT_MODEL is pinned to {FALLBACK_CHAT_MODEL}")
 if GEMINI_EMBEDDING_MODEL != EMBEDDING_MODEL or GEMINI_EMBEDDING_DIMENSIONS != EMBEDDING_DIMENSIONS:
     raise ValueError(f"Embeddings are pinned to {EMBEDDING_MODEL} with {EMBEDDING_DIMENSIONS} dimensions")
+if CHROMA_COLLECTION != "cv_gemini_embedding_2_768_v1":
+    raise ValueError("CHROMA_COLLECTION is pinned to cv_gemini_embedding_2_768_v1")
 if GEMINI_TIMEOUT_SECONDS <= 0 or GEMINI_MAX_RETRIES < 0:
     raise ValueError("Gemini timeout must be positive and retries nonnegative")
 
@@ -44,17 +46,22 @@ TEMPERATURE = 0.0
 
 # ---- Token / pacing budget (Rules 2.x, 3.x) ----
 GEMINI_MAX_RPM = int(os.getenv("GEMINI_MAX_RPM", "12"))
-# One cap for both providers so the shared prompt always fits in OLLAMA_NUM_CTX.
+# Bound input size for both providers; actual token counts depend on their tokenizers.
 LLM_INPUT_MAX_CHARS = int(os.getenv("LLM_INPUT_MAX_CHARS", "8000"))
 EMBED_TEXT_MAX_WORDS = 300
+EMBED_BATCH_SIZE = int(os.getenv("EMBED_BATCH_SIZE", "20"))
 EMBED_BACKOFF_SECONDS = (10, 20, 40)
 EMBED_BACKOFF_JITTER = (1.0, 3.0)
 RECOMMENDED_BATCH_LIMIT = (20, 50)
 
-if not 1 <= GEMINI_MAX_RPM <= 60:
-    raise ValueError("GEMINI_MAX_RPM must be 1..60")
-if OLLAMA_NUM_CTX < 2048 or LLM_INPUT_MAX_CHARS < 1000:
-    raise ValueError("OLLAMA_NUM_CTX must be >= 2048 and LLM_INPUT_MAX_CHARS >= 1000")
+if not 1 <= GEMINI_MAX_RPM <= 12:
+    raise ValueError("GEMINI_MAX_RPM must be 1..12")
+if OLLAMA_NUM_CTX != 4096 or OLLAMA_KEEP_ALIVE not in ("30m", "-1"):
+    raise ValueError("Ollama requires num_ctx=4096 and keep_alive=30m or -1")
+if not 1000 <= LLM_INPUT_MAX_CHARS <= 8000 or OLLAMA_TIMEOUT_SECONDS <= 0:
+    raise ValueError("LLM input cap must be 1000..8000 chars and Ollama timeout positive")
+if not 1 <= EMBED_BATCH_SIZE <= 20:
+    raise ValueError("EMBED_BATCH_SIZE must be 1..20")
 
 RETRIEVE_K = 20
 DEFAULT_TOP_K = 10

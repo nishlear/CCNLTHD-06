@@ -113,21 +113,21 @@ def test_query_validation(client, query):
     assert client.post("/searches", json={"query": query}).status_code == 422
 
 
-def test_ingest_retry_and_partial_failure(model_doubles, monkeypatch):
+def test_invalid_extraction_fails_without_cloud_retry_and_other_cv_continues(model_doubles, monkeypatch):
     monkeypatch.setattr(services, "pdf_to_text", lambda path: path)
     calls = {}
     def extract(text, missing):
         calls[text] = calls.get(text, 0) + 1
-        if text == "good" and calls[text] == 2:
-            assert missing == ["skills"]
+        if text == "good":
+            assert missing == []
             return {"full_name": "Candidate", "skills": ["Python"]}, "gemini"
         return {"full_name": "Candidate", "skills": []}, "gemini"
     monkeypatch.setattr(services, "extract_cv", extract)
-    monkeypatch.setattr(services, "index_cv", lambda *a: None)
+    monkeypatch.setattr(services, "upsert_vectors", lambda *a: None)
     out = ingest.run_ingest([{"cv_id": name, "file_name": name + ".pdf", "file_path": name}
                              for name in ("good", "bad")])
     assert [r["status"] for r in out] == ["ready", "failed"]
-    assert calls == {"good": 2, "bad": 2}
+    assert calls == {"good": 1, "bad": 1}
     assert "skills" in db.get_cv("bad")["error"]
 
 
@@ -137,17 +137,19 @@ def test_pdf_and_index_errors_are_per_file(model_doubles, monkeypatch):
     assert ingest.run_ingest([file])[0]["status"] == "failed"
     monkeypatch.setattr(services, "pdf_to_text", lambda path: "CV text")
     monkeypatch.setattr(services, "extract_cv", lambda *args: ({"full_name": "Candidate", "skills": ["Python"]}, "gemini"))
-    monkeypatch.setattr(services, "index_cv", fail)
+    monkeypatch.setattr(services, "upsert_vectors", fail)
     assert ingest.run_ingest([file])[0]["status"] == "failed"
     assert db.get_cv("bad")["skills"] == ["Python"]
 
 
 def test_save_and_index_rejects_empty_or_non_dict_extraction(model_doubles, monkeypatch):
-    monkeypatch.setattr(services, "index_cv", fail)
+    monkeypatch.setattr(services, "upsert_vectors", fail)
     for bad in (None, {}, ["Python"], "text"):
         out = ingest.save_and_index({"cv_id": "x", "file_name": "x.pdf", "extracted": bad})
-        assert out["error"] and "processed" not in out
-    assert db.get_cv("x") is None
+        assert out.get("error")
+        assert out.get("processed")[0].get("status") == "failed"
+        assert db.get_cv("x").get("status") == "failed"
+        assert db.get_cv("x").get("error") == out.get("error")
 
 
 def test_preprocess_redacts_and_compacts_before_extract(model_doubles, monkeypatch):
@@ -156,7 +158,7 @@ def test_preprocess_redacts_and_compacts_before_extract(model_doubles, monkeypat
         seen["text"] = text
         return {"full_name": "A", "role": "Backend", "skills": ["Python"]}, "ollama"
     monkeypatch.setattr(services, "extract_cv", extract)
-    monkeypatch.setattr(services, "index_cv", lambda *a: None)
+    monkeypatch.setattr(services, "upsert_vectors", lambda *a: None)
     rows = ingest.run_ingest([{"cv_id": "p", "file_name": "p.txt", "file_path": "",
                                "raw_text": "Python   dev\n\n\n mail: a.b@example.org  "}])
     assert rows[0]["status"] == "ready" and rows[0]["source"] == "ollama"
@@ -214,7 +216,7 @@ print(json.dumps({'resumed': True}))
 def test_anonymous_corpus_text_does_not_require_pdf_or_fabricated_name(model_doubles, monkeypatch):
     monkeypatch.setattr(services, "pdf_to_text", fail)
     monkeypatch.setattr(services, "extract_cv", lambda text, missing: ({"full_name": "", "skills": ["Python"]}, "gemini"))
-    monkeypatch.setattr(services, "index_cv", lambda *args: None)
+    monkeypatch.setattr(services, "upsert_vectors", lambda *args: None)
     rows = ingest.run_ingest([{"cv_id": "djinni-a", "file_name": "a.txt", "file_path": "",
                                "raw_text": "Real anonymous candidate text", "display_name": "Anonymous candidate a"}])
     assert rows[0]["status"] == "ready"

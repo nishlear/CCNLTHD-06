@@ -24,6 +24,10 @@ def isolated(tmp_path, monkeypatch):
 
 @pytest.fixture
 def model_doubles(isolated, monkeypatch):
+    class FakeEmbeddings:
+        def embed_documents(self, texts):
+            return [[1., 0., 0.] for _ in texts]
+    monkeypatch.setattr(services, "embeddings", lambda: FakeEmbeddings())
     monkeypatch.setattr(services, "require_gemini", lambda: None)
     monkeypatch.setattr(services, "parse_query", lambda query: {
         "skills": ["Python", "FastAPI"], "min_years": 3})

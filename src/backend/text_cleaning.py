@@ -9,7 +9,7 @@ contact details can remain.
 import re
 from collections import Counter
 
-REDACTION_VERSION = "contacts-v1"
+REDACTION_VERSION = "contacts-v2"
 
 _EMAIL = re.compile(r"(?<![\w.+-])[\w.+-]+@[\w.-]+\.[a-zA-Z]{2,}(?![\w.-])")
 _URL = re.compile(r"(?i)\b(?:https?://|www\.)[^\s<>\[\]\"']+")
@@ -18,8 +18,9 @@ _PROFILE = re.compile(
     r"facebook\.com|instagram\.com|twitter\.com|x\.com)/[^\s<>\[\]\"']+"
 )
 _INTERNATIONAL_PHONE = re.compile(r"(?<![\w+])\+\d[\d ().-]{6,27}\d(?!\w)")
+_LOCAL_PHONE = re.compile(r"(?<![\w+])0(?:[ .()-]*\d){8,10}(?!\w)")
 _LABELLED_PHONE = re.compile(
-    r"(?i)\b(?:phone|telephone|tel|mobile|whatsapp|viber)\s*[:=]\s*"
+    r"(?i)\b(?:phone|telephone|tel|mobile|whatsapp|viber|sđt|điện thoại)\s*[:=]\s*"
     r"(?P<number>\+?\d[\d ().-]{5,27}\d)(?!\w)"
 )
 _MESSENGER = re.compile(
@@ -53,6 +54,7 @@ def redact_contacts(text: str) -> tuple[str, dict[str, int]]:
 
     text = _LABELLED_PHONE.sub(replace_phone, text)
     text = _INTERNATIONAL_PHONE.sub(replace_phone, text)
+    text = _LOCAL_PHONE.sub(replace_phone, text)
     return text, dict(counts)
 
 

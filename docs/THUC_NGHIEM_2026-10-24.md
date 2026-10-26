@@ -1,200 +1,120 @@
-# **Chương 12 Triển khai tích hợp và minh chứng kết quả** {#chương-12-triển-khai-tích-hợp-và-minh-chứng-kết-quả}
+# **Chương 12 Thực nghiệm model thật và đối chiếu minh chứng**
 
-Cập nhật thực nghiệm ngày 24/10/2026 (Asia/Saigon). Phần kết quả ở chương này sử dụng 100.000 hồ sơ ứng viên thật, thay cho bộ số liệu ba CV mẫu của bản trước. Các kiểm thử logic có fixture ở những chương trước vẫn là kiểm thử có kiểm soát; chúng không được coi là bằng chứng gọi model thật.
+## **12.1 Phạm vi và nguồn bằng chứng**
 
-## **12.1 Hiện thực hóa trong repository và phạm vi kiểm chứng** {#12.1-hiện-thực-hóa-trong-repository-và-phạm-vi-kiểm-chứng}
+Thực nghiệm ngày 24/10/2026 dùng dữ liệu hồ sơ thật đã ẩn danh từ Djinni và Gemini trong ứng dụng đang chạy. Minh chứng gồm log pilot, phản hồi MODEL\_OK, SQLite nghiệp vụ, Chroma, lịch sử checkpoint, ba ảnh người dùng cung cấp và lượt Top 1 chạy lại trực tiếp trên giao diện.
 
-Mã nguồn cục bộ đã thay hai graph stub bằng luồng ingest/search, bổ sung client OpenAI, Chroma và cơ chế HR duyệt bằng SQLite checkpoint. Đây là mô tả hiện thực đã viết trong repository; lượt chạy hiện tại chưa xác minh tích hợp LangGraph/Chroma/OpenAI vì chưa cài được phụ thuộc. Các thay đổi chưa commit; HEAD bf98fa0f74aa xác định nền mã ban đầu, không đại diện cho các thay đổi đang thử nghiệm.
+Corpus 100.000 hồ sơ, pilot 20 hồ sơ, lượt duyệt 10 người và lượt duyệt 1 người là các đơn vị khác nhau. Không cộng gộp chúng thành số CV đã chạy qua model hoặc dùng kết quả tìm kiếm từ khóa trên corpus để đại diện cho chất lượng vector.
 
-| Hạng mục | Hiện thực trong mã nguồn | Bằng chứng của lượt này |
-| :---- | :---- | :---- |
-| Ingest | Send theo CV; đọc PDF hoặc văn bản corpus; extract–validate tối đa hai lần; lưu/index hoặc failed | Đã kiểm tra mã nguồn; chưa chạy luồng model thật |
-| Search và review | Parse tiêu chí; truy xuất Chroma; score/rank; explain; interrupt human\_review và Command resume; chỉ sinh câu hỏi cho ID đã duyệt | Đã viết mã; pytest tích hợp chưa chạy |
-| OpenAI | gpt-4o-mini cho tác vụ cấu trúc; text-embedding-3-small cho embedding; timeout 30 giây, client retry 1 | Đã có cấu hình khóa; chưa xác thực key hoặc gọi model thành công |
-| Dữ liệu và giao diện | Danh sách CV phân trang; importer bỏ qua hàng ready có cùng văn bản đã lọc; lọc liên hệ trước ingest | Kiểm thử SQLite, bộ lọc, lấy mẫu và giao diện đạt như mục 12.5 |
+## **12.2 Dữ liệu chuẩn bị và chỉ mục thực tế**
 
-Công thức nghiệp vụ giữ 0.5 × skill\_fit \+ 0.3 × similarity \+ 0.2 × experience\_fit; đây không phải xác suất phù hợp tuyển dụng. Kiểm thử công thức và dữ liệu thiếu được thực thi riêng, không dùng kết quả fixture làm đầu ra OpenAI.
+| Đại lượng | Kết quả đã ghi nhận |
+| ----- | ----- |
+| Nguồn | lang-uk/recruitment-dataset-candidate-profiles-english |
+| Dòng Parquet nguồn | 210.250 |
+| Hồ sơ hợp lệ duy nhất | 209.638; loại 612 do độ dài |
+| Mẫu JSONL | 100.000 hồ sơ, reservoir sampling, seed 20261023 |
+| SHA-256 mẫu | e446c3fa164a3003f453f28ad6130fbda79cd2f31f8b86620edabcf338984f8d |
+| Chroma đã kiểm tra | 20 vector thuộc 20 hồ sơ được chọn |
+| Số chiều và định dạng | 768, compact-v2; norm xấp xỉ 1 |
 
-## **12.2 Nguồn dữ liệu thật và môi trường đo** {#12.2-nguồn-dữ-liệu-thật-và-môi-trường-đo}
+Dữ liệu là văn bản CV, không phải 100.000 PDF. Source revision đã ghi nhận là f4d04f624126e27a17770d06953dce7e914ce214. Tên Anonymous candidate là định danh hiển thị. Hồ sơ có thể đã cũ; không suy ra số năm hiện tại bằng cách lấy ngày hôm nay trừ một mốc Present trong CV.
 
-| Thành phần | Quan sát / số lượng |
-| :---- | :---- |
-| Môi trường | Windows; Python 3.11.9; SQLite 3.45.1; CPU logic 28; RAM vật lý 15.84 GiB |
-| CPU do runtime báo cáo | Intel64 Family 6 Model 183 Stepping 1, GenuineIntel |
-| Dataset | lang-uk/recruitment-dataset-candidate-profiles-english; dataset card khai báo MIT |
-| Dòng Parquet nguồn | 210,250 |
-| Hồ sơ tiếng Anh hợp lệ, duy nhất | 209,638 |
-| Loại do độ dài CV | 612 |
-| Mẫu dùng trong thực nghiệm | 100,000; reservoir sampling; seed 20261023 |
-| Kích thước JSONL | 153,764,041 byte |
+Bộ lọc contacts-v2 che thông tin liên hệ trước extraction. Pilot ghi 1 hồ sơ có thay thế 1 URL. Thống kê cũ trên toàn bộ corpus dùng bộ lọc khác được giữ trong file benchmark để đối chiếu, không trộn với số đo pilot này.
 
-Bảng 12.1 Nguồn dữ liệu và môi trường thực nghiệm ngày 24/10/2026. Dataset là văn bản hồ sơ ứng viên đã được nguồn công bố là ẩn danh; không phải 100.000 PDF gốc và không phải CV sinh tổng hợp. Quét toàn bộ nguồn rồi lấy mẫu trên các hồ sơ đủ điều kiện; loại trùng theo source ID hoặc SHA-256 của nội dung đã casefold và chuẩn hóa khoảng trắng. Chỉ nhận CV tiếng Anh dài 80–24.000 ký tự trước khi thêm vị trí. Tên Anonymous candidate chỉ là ID hiển thị; kinh nghiệm nguồn không được dùng làm nhãn extraction.
+Ở snapshot buổi sáng, app.db có 20 hàng ready và 60 hàng failed lịch sử. Đây không phải kết quả 60 lỗi của pilot mới; trong nhóm 20 được chọn, tất cả đều ready và có vector. Báo cáo không xóa dữ liệu nguồn hoặc lịch sử lỗi để làm đẹp tỷ lệ thành công.
 
-Revision nguồn: f4d04f624126e27a17770d06953dce7e914ce214. SHA-256 JSONL: e446c3fa164a3003f453f28ad6130fbda79cd2f31f8b86620edabcf338984f8d. Không có nhãn mức phù hợp CV–JD để tính Precision, Recall hoặc nDCG.
+## **12.3 Phản hồi Gemini và pilot 20 hồ sơ**
 
-## **12.3 Lọc thông tin liên hệ trước xử lý** {#12.3-lọc-thông-tin-liên-hệ-trước-xử-lý}
+| Minh chứng | Giá trị |
+| ----- | ----- |
+| MODEL\_OK | succeeded, gemini-3.5-flash-lite, STOP |
+| Thời điểm phép thử | 08:13:19 ngày 24/10/2026, Asia/Saigon |
+| Response ID | LwbcapPuNO\_n4-EP9b6hyAQ |
+| Token phép thử | 7 input, 3 output, 44 thinking; tổng 54 |
+| Độ trễ phép thử | 1.853,097 ms |
+| Pilot | completed; 19 xử lý, 19 ready, 0 failed; 1 already\_ready |
+| Nguồn extraction mới | Gemini cho cả 19 hồ sơ |
+| Local fallback | Warmup thành công; không có hồ sơ pilot chuyển sang Qwen |
+| Thời gian pilot và truy vấn mẫu | 99,424 giây; riêng báo cáo giữa chừng 95,970 giây |
 
-Bộ lọc contacts-v1 được áp dụng trước khi văn bản đi vào graph, extraction, embedding và cơ sở dữ liệu ứng dụng. File nguồn vẫn giữ nguyên cục bộ để đối chiếu; báo cáo chỉ lưu số đếm tổng hợp. Hàng ready cũ chứa văn bản chưa lọc sẽ được xử lý lại.
+54 token và 1,853 giây chỉ thuộc request MODEL\_OK, không phải tổng chi phí hoặc latency xử lý 19 CV. Chưa có tổng usage và hóa đơn provider cho toàn bộ pilot. Số 19 là số hồ sơ được xử lý trong lượt này, không chứng minh đó là lần đầu các hồ sơ xuất hiện trong database.
 
-| Kết quả trên 100.000 hồ sơ | Giá trị |
-| :---- | :---- |
-| Hồ sơ có thay thế | 1,277 |
-| URL được thay thế | 2,811 |
-| Liên kết hồ sơ không có giao thức | 16 |
-| Chuỗi giống số điện thoại | 8 |
-| Liên hệ messenger có nhãn | 6 |
-| Email khớp mẫu bộ lọc | 0 |
-| Thời gian riêng cho bộ lọc | 17.916 giây |
+## **12.4 Lượt tìm kiếm và duyệt trong ảnh người dùng**
 
-Bảng 12.2 Kết quả bộ lọc theo mẫu. Các chuỗi phát hiện có thể bị nhận nhầm; đây chưa phải bảo đảm ẩn danh hoàn toàn. Tên, công ty, địa điểm, chi tiết dự án và thông tin liên hệ viết biến thể vẫn có thể nhận diện gián tiếp một người. Không đưa nội dung CV gốc, thông tin liên hệ hoặc khóa API vào báo cáo.
+Search ID: a91025e0f20f489db58dda8d4a739efe. Truy vấn dev 3 năm được phân tích thành skills rỗng, min\_years=3, level=null và keywords chứa dev. Top 10 có điểm chính xác từ 0,747582 đến 0,958391; giao diện làm tròn còn hai chữ số thập phân.
 
-## **12.4 Baseline tìm kiếm từ khóa trên 100.000 hồ sơ đã lọc** {#12.4-baseline-tìm-kiếm-từ-khóa-trên-100.000-hồ-sơ-đã-lọc}
+Checkpoint lịch sử ghi awaiting\_review trước quyết định, approval\_status=pending, next=\[human\_review\] và 0 câu hỏi. Cả 10 ô được chọn khi người dùng gửi duyệt. Bản ghi cuối cùng completed, approved cho 10 CV và có 60 câu hỏi: 20 technical, 20 experience, 20 behavioral. Mỗi CV có 6 câu, gồm 2 câu mỗi nhóm. Checkpoint cuối có next rỗng và errors rỗng.
 
-Đã tạo mới chỉ mục SQLite FTS5, tokenizer unicode61, truy vấn AND và xếp hạng BM25, lấy top 10\. Thời gian đọc JSONL, lọc liên hệ, chèn chỉ mục và commit: 26.305 giây, bao gồm 17.916 giây lọc. File SQLite sau checkpoint: 189,288,448 byte (180.52 MiB).
+Ba ảnh Screenshot 2026-10-24 082917.png, 082952.png và 083011.png thể hiện shortlist và các nhóm câu hỏi tương ứng. Trạng thái awaiting\_review còn hiện trong ảnh đầu cùng nút Đang tạo câu hỏi là trạng thái giao diện trong khi đợi HTTP review trả về; dữ liệu cuối cùng trong SQLite và checkpoint đã completed.
 
-Mỗi truy vấn được đo 50 lần; tổng 250 lần đo cho 5 nhóm truy vấn. Số đếm hồ sơ khớp được tính trước lượt đo, nên kết quả là warm-cache. p50 là trung vị; p95 tính bằng nearest-rank.
+| Ứng viên trong shortlist | Kinh nghiệm lưu trữ | Điểm | approved |
+| ----- | ----- | ----- | ----- |
+| 62c4d272 | 3.0 | 0.958391 | Có |
+| 700fef76 | 3.0 | 0.956896 | Có |
+| 163fb9a3 | 18.0 | 0.950663 | Có |
+| 3f56345b | 5.0 | 0.950326 | Có |
+| 9f8cbaf0 | 3.0 | 0.948591 | Có |
+| 4852f248 | 12.0 | 0.947847 | Có |
+| 33d0892e | 10.0 | 0.943763 | Có |
+| af8a1764 | 3.0 | 0.943605 | Có |
+| 2bc3301a | 2.0 | 0.879044 | Có |
+| dabeaff8 | Chưa rõ | 0.747582 | Có |
 
-| Truy vấn AND | Hồ sơ khớp | p50 (ms) | p95 (ms) |
-| :---- | :---- | :---- | :---- |
-| Python AND FastAPI | 494 | 0.940 | 2.486 |
-| Java AND Spring | 4,035 | 3.411 | 4.314 |
-| React AND TypeScript | 4,380 | 3.748 | 5.091 |
-| Docker AND Kubernetes | 1,665 | 2.227 | 4.133 |
-| SQL AND data | 4,363 | 6.534 | 8.062 |
+## **12.5 Lượt chạy lại trực tiếp Top 1**
 
-Bảng 12.3 Số đo thực tế trên dữ liệu thật đã lọc. Phép đo này là tìm kiếm từ khóa cục bộ; thời gian truy vấn không gồm tạo chỉ mục, lọc, HTTP, LangGraph, Chroma, embedding hoặc LLM. Không có request OpenAI/embedding trong baseline. Số liệu không đo tốc độ hay chất lượng ANN, không suy ra cold-start hoặc tải nhiều người dùng, và không chứng minh độ phù hợp tuyển dụng.
+Truy vấn mới bổ sung kỹ năng rõ ràng: Software engineer có ít nhất 3 năm kinh nghiệm thương mại, biết Akka, Netty và Kafka Streams. Top được đặt bằng 1\. Đây là một lượt tìm mới, không sửa kết quả dev 3 năm đã lưu.
 
-## **12.5 Kết quả kiểm thử mã nguồn đã thực thi** {#12.5-kết-quả-kiểm-thử-mã-nguồn-đã-thực-thi}
+Search ID: c3adbe3a46d348a1be2e0577737d9b4f. Kết quả là Anonymous candidate 3f56345b, Software Engineer, years\_experience=5, score=0.974037; giao diện hiển thị 0,97. CV nguồn ghi rõ 5+ years of commercial experience, nên có căn cứ đáp ứng điều kiện từ 3 năm kinh nghiệm làm việc. Các kỹ năng khớp là Akka, Netty và Kafka Streams.
 
-| Nhóm kiểm thử | Đạt / tổng |
-| :---- | :---- |
-| Công thức score và dữ liệu thiếu | 5 / 5 |
-| SQLite: giao dịch, review, phân trang | 7 / 7 |
-| Lấy mẫu và loại trùng dữ liệu | 2 / 2 |
-| Lọc liên hệ và biên dữ liệu ingest | 5 / 5 |
-| Giao diện bằng Node test, DOM giả lập | 4 / 4 |
-| Tổng đã thực thi | 23 / 23 |
+Trước khi nhấn Gửi duyệt & tạo câu hỏi, checkpoint có next=\[human\_review\], approval\_status=pending và 0 câu hỏi. Sau thao tác trên giao diện, chỉ một CV được approved. Kết quả completed, 6 câu hỏi được lưu, mỗi nhóm technical, experience, behavioral có 2 câu; errors rỗng và next rỗng.
 
-Bảng 12.4 Các ca kiểm thử đã chạy trong repository. 19 kiểm thử Python unittest hoàn tất trong 0.453 giây; 4 kiểm thử Node hoàn tất trong 83.026 ms. Kiểm thử giao diện dùng DOM giả lập, chưa phải browser end-to-end. Bộ pytest cho API/LangGraph/Chroma/checkpoint chưa chạy được vì thiếu phụ thuộc. Tỷ lệ đạt chỉ phản ánh các assert của bộ kiểm thử này, không phải độ chính xác của model.
+Ví dụ câu hỏi kỹ thuật trong kết quả mới đề cập cách dùng Akka xử lý dữ liệu bất đồng bộ trong backend IoT và tình huống ưu tiên Netty. Câu hỏi kinh nghiệm đề cập Kafka Streams và CI/CD. Một số đầu ra tiếng Việt chưa có đầy đủ dấu; đây là điểm chất lượng sinh văn bản cần cải thiện, không phải lỗi mất trạng thái.
 
-## **12.6 Kết quả thử chạy OpenAI với 100 hồ sơ** {#12.6-kết-quả-thử-chạy-openai-với-100-hồ-sơ}
+Ảnh top1-awaiting-review.jpg và top1-completed.jpg ghi lại hai thời điểm. Các ảnh cùng dữ liệu SQLite/checkpoint giúp phân biệt trạng thái chờ duyệt và đầu ra đã sinh thành công.
 
-Đã thực thi .\\scripts\\run-real-data.ps1 \-Limit 100\. Bước uv sync \--upgrade \--extra research dừng khi truy cập PyPI do lỗi DNS 11001\. Terminal thực thi tự động cũng không phân giải được api.openai.com. PowerShell thông thường của người dùng đã phân giải được cả hai tên miền; hai môi trường chưa có cùng kết quả kết nối, và DNS thành công chưa xác thực được API key.
+## **12.6 Những giới hạn bộc lộ trong output**
 
-| Hạng mục | Kết quả quan sát |
-| :---- | :---- |
-| API key có cấu hình | Có; giá trị khóa không được ghi lại |
-| Cập nhật thư viện / uv.lock | Chưa hoàn tất do DNS 11001 |
-| Pilot OpenAI | Bị chặn trước bước xử lý CV |
-| Hồ sơ đã xử lý / yêu cầu | 0 / 100 |
-| Ready / failed phát sinh | 0 / 0; chưa bắt đầu, không phải tỷ lệ thành công |
-| Request model / embedding trong pilot | 0 / 0 |
-| Token, chi phí, độ trễ và chất lượng model | Chưa đo |
-| Chạy 100.000 hồ sơ qua OpenAI | Chưa thực hiện |
+Thứ nhất, min\_years chưa phải bộ lọc cứng. CV 2bc3301a có 2 năm vẫn ở hạng 9 với 0,879044; CV dabeaff8 chưa rõ số năm vẫn ở hạng 10 với 0,747582. Khi skills rỗng, skill\_fit=1 đóng góp sẵn 0,5 điểm. Điểm cao do đó không đồng nghĩa đáp ứng mọi điều kiện tuyển dụng.
 
-Bảng 12.5 Trạng thái pilot thực tế. Runner trực tiếp trả status=blocked, exit code=2, thiếu dotenv, langgraph, langchain\_openai, chromadb và fastapi. Chưa có phản hồi model, usage từ provider hoặc trace API thành công để xác nhận sử dụng model thật. Việc có khóa và mã gọi API không thay cho bằng chứng thực thi. Kết quả fixture ở Chương 4–5 và tab Minh chứng tuần 7 vẫn giữ đúng phạm vi kiểm thử có kiểm soát.
+Thứ hai, dữ liệu kinh nghiệm chưa phân biệt mức độ chắc chắn. CV 62c4d272 ghi almost 3 years nhưng được lưu thành 3,0; không đủ căn cứ kết luận ít nhất 3 năm. CV 700fef76 nói đã học lập trình hơn 3 năm; con số này chưa chứng minh 3 năm kinh nghiệm làm việc thương mại. Lời giải thích và câu hỏi có thể kế thừa sai lệch của extraction.
 
-## **12.7 Tái lập, minh chứng và giới hạn kết luận** {#12.7-tái-lập,-minh-chứng-và-giới-hạn-kết-luận}
+Thứ ba, từ khóa dev quá rộng, skills rỗng và level chưa được dùng như điều kiện lọc bắt buộc. Shortlist có nghệ sĩ, quản lý và hỗ trợ khách hàng. Đây là đầu ra truy hồi/xếp hạng hiện tại, không phải bằng chứng hệ thống đã nhận diện đúng nghề developer cho mọi kết quả.
 
-Lệnh baseline đã chạy:
+Thứ tư, giao diện tự chọn sẵn các CV có score từ 0,5. Trong lượt dev 3 năm, cả 10 người được chọn dù có người thiếu hoặc không đạt kinh nghiệm. Việc bấm duyệt vẫn là hành động của HR nhưng cần hỗ trợ người dùng tốt hơn bằng cách hiển thị lý do không đạt và không mặc định xem điểm là đủ điều kiện.
 
-python \-m scripts.benchmark\_corpus \--redact-contacts \--database data/benchmarks/djinni\_100k\_filtered\_20261024.sqlite \--report data/benchmarks/djinni\_100k\_filtered\_20261024.json \--repeats 50
+Các hướng cần bổ sung là tách điều kiện bắt buộc khỏi điểm mềm, lưu bằng chứng và độ chắc chắn cho số năm, phân biệt học tập với làm việc, kiểm tra nghề/vai trò, và đánh giá bằng bộ CV–JD có nhãn. Những thay đổi này chưa được ghi là đã hoàn thành trong bản cập nhật báo cáo.
 
-Script không ghi đè database đã có; lần chạy lại cần chọn đường dẫn database và report mới. Khi terminal truy cập được PyPI/OpenAI, lệnh .\\scripts\\run-real-data.ps1 \-Limit 100 sẽ cập nhật phụ thuộc, chạy pytest, kiểm tra API rồi xử lý pilot. Sau khi có số liệu ready/failed, lỗi, usage và chi phí mới mở rộng tới \-Limit 100000; chưa mở rộng trong lượt thực nghiệm này.
+## **12.7 Minh chứng và cách tái lập**
 
-Minh chứng nằm trong repository: docs/THUC\_NGHIEM\_2026-10-24.md; data/benchmarks/experiments\_20261024.json; data/benchmarks/djinni\_100k\_filtered\_20261024.json; data/benchmarks/pilot\_100\_20261024.json; data/benchmarks/runtime-check.json. JSON tổng hợp lưu SHA-256 của ba script benchmark, bộ lọc và importer. Chưa có commit triển khai, kết quả CI hoặc Docker build cho lần cập nhật này.
+| Nguồn | Nội dung đối chiếu |
+| ----- | ----- |
+| gemini-model-check.json | Model, response ID, token và thời gian của MODEL\_OK |
+| gemini-dataset-run.json | Pilot 19 xử lý \+ 1 tái sử dụng; model và cấu hình hai pha |
+| report-audit-20261024.json | Hash code, snapshot nghiệp vụ, lịch sử checkpoint, câu hỏi và thống kê vector |
+| app.db và checkpoints.db | Các search ID, approved\_cv\_ids, errors và số câu hỏi |
+| Chroma | 20 vector 768 chiều, định dạng compact-v2 |
+| Ba ảnh người dùng | Lượt dev 3 năm, 10 CV và các nhóm câu hỏi |
+| Hai ảnh Top 1 mới | Điểm dừng trước duyệt và kết quả 1 CV/6 câu hỏi |
 
-Cần bổ sung phản hồi model thật, model/snapshot, input/output tokens, số request, độ trễ, lỗi, tỷ lệ CV thành công và trace search/review/restart. Precision@k, Recall@k, nDCG@k cần nhãn CV–JD độc lập. Giữ riêng ba loại bằng chứng: baseline dữ liệu thật, kiểm thử logic có fixture và thực nghiệm model thật. Hiện đã có hai loại đầu; loại thứ ba còn bị chặn.
+Các JSON và ảnh audit nằm trong data/benchmarks và data/benchmarks/proof/report-audit-20261024. Hash SHA-256 của các file code liên quan được lưu trong JSON audit; không dùng HEAD cũ để đại diện cho mọi thay đổi chưa commit.
 
-Nhật ký thực nghiệm ngày 24/10/2026: thẻ Thực nghiệm 100k CV — 24-10-2026 trong cùng tài liệu. Nhật ký fixture tuần 7 được giữ để đối chiếu lịch sử, không được diễn giải lại thành phản hồi OpenAI.
+Có thể mở lịch sử theo \#search=a91025e0f20f489db58dda8d4a739efe hoặc \#search=c3adbe3a46d348a1be2e0577737d9b4f trên cùng web server. Mở lại lượt đã completed không cần chạy lại extraction hoặc sinh câu hỏi. Muốn thực nghiệm lượt mới cần tạo search ID mới và ghi riêng thời gian, số người duyệt và output.
 
-## **12.8 Nguồn tham khảo** {#12.8-nguồn-tham-khảo}
+## **12.8 Kiểm thử mã nguồn và kết luận thực nghiệm**
 
-Dataset: https\://huggingface.co/datasets/lang-uk/recruitment-dataset-candidate-profiles-english
+Terminal người dùng đã chạy toàn bộ suite với 107 passed và 12 subtests passed trong 7,46 giây. Đây là kết quả kiểm tra logic, dữ liệu, graph và API; không dùng số test làm độ chính xác của Gemini. Những ca kiểm thử thay thế lời gọi provider chỉ phục vụ kiểm tra lỗi/nhánh, không được đưa vào bảng output model thật.
 
-Drushchak & Romanyshyn (2024), Introducing the Djinni Recruitment Dataset: A Corpus of Anonymized CVs and Job Postings. https\://aclanthology.org/2024.unlp-1.2/
+Hai lượt giao diện mới xác nhận được chuỗi parse, retrieval, rank, explain, interrupt, duyệt và sinh câu hỏi với dữ liệu lưu nhất quán. Pilot xác nhận extraction/index trên nhóm 20 hồ sơ, gồm 19 xử lý và 1 tái sử dụng. Chưa có đánh giá Precision@k, Recall@k, nDCG, độ chính xác kinh nghiệm, tải đồng thời thực tế hoặc tổng chi phí provider. Không khẳng định hệ thống đạt chất lượng tuyển dụng chỉ từ một demo hoàn tất.
 
-### 
+## **12.9 Kiểm chứng chạy thật bổ sung buổi tối 24/10/2026**
 
-## **12.9 Chuyển nhà cung cấp API sang Google Gemini**
+Đợt mới chạy toàn bộ suite: **115 passed, 15 subtests passed trong 13,53 giây**; thêm **4 test frontend passed**. Đã bổ sung dependency SOCKS cho SDK và đồng bộ môi trường theo uv.lock trước bộ kiểm thử cuối.
 
-Cập nhật ngày 24/10/2026 sau lượt thực nghiệm trên: cấu hình hiện hành đã chuyển từ OpenAI sang Gemini. Mục này thay thế thông tin nhà cung cấp hiện hành ở mục 12.1. Các kết quả FTS5 và nhật ký pilot OpenAI ở mục 12.6 được giữ theo đúng lượt đo cũ, không được diễn giải lại thành kết quả Gemini.
+Pilot mới chọn 20 CV chưa có trong database: **20 xử lý, 20 ready, 0 failed, 0 already_ready**, thời gian **121,124 giây**. Cả 20 extraction dùng Gemini; log ghi một batch embedding HTTP 200 sau khi toàn bộ cache được lưu. Nạp lại cùng tập: **20 already_ready**, 0 xử lý mới, 0,609 giây. Chroma sau lượt này có **40 vector 768 chiều**, toàn bộ compact-v2, hữu hạn và norm xấp xỉ 1; 60 hàng failed lịch sử vẫn được giữ.
 
-Sau khi người dùng bổ sung khóa, đã thực thi kiểm tra model, kiểm tra môi trường, cập nhật phụ thuộc và khởi động pilot 100 hồ sơ. Khóa đã được nhận diện nhưng kết nối DNS của terminal thực thi vẫn lỗi. Chưa thể kết luận khóa hợp lệ hoặc model đã chạy thành công.
+Search ID mới **13dbc9cc7fad4f29a96bdf686fd3d9e5** tìm Top 1 với tối thiểu 3 năm và Akka/Netty/Kafka Streams. Ứng viên **3f56345b** có bằng chứng nguồn “5+ years of commercial experience”, điểm **0,977572**. Trước duyệt: pending/human_review, 0 câu hỏi. Sau duyệt một người: completed, **6 câu hỏi**, mỗi nhóm có 2, next và errors đều rỗng. Đây là lượt API mới, không phải lượt trong ảnh buổi sáng.
 
-| Thành phần | Cấu hình / trạng thái hiện tại |
-| :---- | :---- |
-| Model tác vụ cấu trúc | Cấu hình gemini-3.8-flash; Gemini Developer API; native JSON schema |
-| Embedding | Cấu hình gemini-embedding-2; 768 chiều; chuẩn hóa vector; tiền tố riêng cho query và document |
-| Thư viện khai báo | langchain-google-genai \>=4.4.2,\<5 và google-genai \>=2.20,\<3; chưa cài thành công trong terminal này |
-| Xác thực | Đã phát hiện GEMINI\_API\_KEY hoặc GOOGLE\_API\_KEY; chưa xác thực được với Google; không ghi giá trị khóa |
-| Collection mặc định | cv\_gemini\_embedding\_2\_768\_v1; kiểm tra provider/model/số chiều/định dạng; không trộn vector cũ |
-| Kiểm thử đã ghi nhận | 32 unittest Python và 4 kiểm thử Node đạt trong lượt chuyển đổi; các biên API dùng test double |
-| Gọi Gemini sau khi cài khóa | Đã thử generateContent 1 lần lúc 19:35:14 UTC ngày 23/10/2026 (02:35:14 ngày 24/10, UTC+7); network\_error, gaierror, mã 11001 |
-| Kết nối PyPI / thư viện | uv sync \--upgrade \--extra research thất bại do DNS 11001 tại pypi.org; uv.lock chưa cập nhật |
-| Pilot Gemini 100 hồ sơ | Bị chặn trước xử lý vì thiếu phụ thuộc; processed/ready/failed \= 0/0/0; chưa gửi CV hoặc gọi embedding |
-| Phản hồi, token và độ trễ model | Chưa có phản hồi HTTP từ Google; chưa đo token, chi phí, độ trễ hay chất lượng model |
+Qwen thật cũng đã extract riêng một CV từ tập pilot, JSON qua schema, num_ctx=4096 và keep_alive=30m. Đây là kiểm tra local trực tiếp, không phải failover phát sinh tự nhiên; pilot không gặp 429. Chưa có ảnh UI mới do Edge không khởi chạy và tải Chromium bị allowlist chặn. Không dùng ảnh cũ hay phản hồi model giả để đại diện cho lượt mới.
 
-DNS 11001 xảy ra trước khi thiết lập kết nối HTTP tới generativelanguage.googleapis.com. Số 1 ở trên là số lần thử inference; không phải một phản hồi model thành công. Thời gian 24.243 ms trong file kiểm tra là thời gian gặp lỗi mạng, không phải độ trễ suy luận. Pilot dừng trước xử lý nên 0/100 không phải tỷ lệ thành công hay thất bại của CV.
-
-Importer giữ bước lọc liên hệ trước khi gửi CV tới Gemini. Hàng ready chỉ được tái sử dụng nếu văn bản khớp và có vector trong collection hiện tại; vì vậy các hàng đã index bằng nhà cung cấp cũ không bị bỏ qua nhầm. Ngưỡng similarity 0.55 vẫn là tham số thực nghiệm và cần hiệu chỉnh trên embedding Gemini.
-
-Khi terminal có thể truy cập PyPI và Google API, chạy scripts/run-real-data.ps1 \-Limit 100 để cài phụ thuộc, kiểm thử tích hợp, xác thực kết nối, kiểm tra inference rồi chạy pilot. Hiện chưa có bằng chứng extraction, embedding hoặc workflow CV với Gemini thật; pytest tích hợp cũng chưa chạy do thiếu phụ thuộc.
-
-Minh chứng lượt thực thi sau khi cài khóa: data/benchmarks/gemini-execution-20261024.json; gemini-model-check.json và runtime-check.json trong cùng thư mục. Nhật ký kiểm chứng chuyển đổi: data/benchmarks/gemini-migration-checks.json. Không có giá trị khóa API hoặc nội dung CV trong các báo cáo trạng thái này.
-
-Nguồn: https\://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash ; https\://ai.google.dev/gemini-api/docs/embeddings ; https\://pypi.org/project/langchain-google-genai/4.4.2/
-
-## **12.10 Minh chứng gọi Google Gemini thật thành công** {#12.10-minh-chứng-gọi-google-gemini-thật-thành-công}
-
-Người dùng đã chạy SDK Google trong PowerShell thông thường và nhận phản hồi model thật. Kết quả được đối chiếu với file JSON trong repository. Cấu hình hiện hành chuyển sang gemini-3.5-flash-lite, timeout 60 giây; trạng thái này cập nhật các hạn chế kết nối và cấu hình cũ ghi ở mục 12.9.
-
-| Chỉ số | Giá trị quan sát |
-| :---- | :---- |
-| Model yêu cầu / trả về | gemini-3.5-flash-lite / gemini-3.5-flash-lite |
-| Thời điểm bắt đầu UTC | 2026-10-23T20:20:03.898624+00:00 |
-| Trạng thái / finish reason | succeeded / STOP |
-| Số lần thử inference | 1; tắt retry tự động |
-| Phản hồi nhìn thấy | MODEL\_OK; expected\_output\_match \= true |
-| Response ID | dcHbavzuN4qdjuMP4IHwwQU |
-| Token input / output nhìn thấy | 7 / 3 |
-| Token thinking / tổng cộng | 55 / 65 |
-| Thời gian phép kiểm tra | 1.915,83 ms, tương đương khoảng 1,916 giây |
-| Số hồ sơ CV đã gửi | 0 |
-
-Bảng 12.6 Kết quả một phép gọi generateContent thật với prompt “Reply with exactly MODEL\_OK”. Thời gian gồm khởi tạo SDK/client và request; không phải thời gian suy luận thuần. Một mẫu không đủ tính p50/p95 hoặc so sánh chất lượng model. Token thinking chỉ ghi số đếm, không ghi nội dung suy nghĩ.
-
-Đã cài google-genai 2.33.0, langchain-google-genai 4.4.2, LangGraph 1.2.16 và Chroma 1.5.9; uv.lock đã được tạo lại. Kiểm tra sau đổi cấu hình: 50 passed, 8 subtests passed trong 5,01 giây. Các biên model ở bộ kiểm thử dùng test double; bộ kiểm thử API đầy đủ chưa hoàn tất trong phiên thực thi tự động.
-
-Chưa có kết quả embedding Gemini, trích xuất CV, semantic search hoặc review với dữ liệu thật. Pilot 100 hồ sơ trong phiên tự động dừng trước xử lý do DNS 11001, processed \= 0; đây không phải tỷ lệ thất bại của CV. Chi phí API và chất lượng tuyển dụng chưa được đo.
-
-Tái lập: uv run \--no-sync python \-m scripts.check\_gemini\_model \--transport sdk \--model gemini-3.5-flash-lite \--timeout 60\. Sau đó chạy scripts/run-real-data.ps1 \-Limit 100 trong PowerShell có kết nối hoạt động.
-
-Minh chứng: data/benchmarks/gemini-flash-lite-check.json và data/benchmarks/gemini-success-evidence-20261024.json. Các phép thử gemini-3.8-flash trước đó bị timeout/504 được giữ nguyên trong nhật ký; không được diễn giải thành lượt inference thành công.
-
-Nguồn model: https\://ai.google.dev/gemini-api/docs/models/gemini-3.5-flash-lite
-
-## **12.11 Pilot 20 hồ sơ thật với Gemini**
-
-Người dùng chạy scripts/run-real-data.ps1 \-Limit 20 trong PowerShell có kết nối hoạt động. JSON cuối, SQLite, Chroma và checkpoint được kiểm tra lại. Đã có bằng chứng trích xuất CV, embedding và tìm kiếm với dữ liệu thật, bổ sung cho phép gọi ngắn ở mục 12.10. Chat dùng gemini-3.5-flash-lite; embedding dùng gemini-embedding-2.
-
-| Hạng mục | Kết quả quan sát |
-| :---- | :---- |
-| Phạm vi lượt chạy | 20 hồ sơ đầu trong JSONL đã chuẩn bị; runner completed |
-| Xử lý mới trong lượt này | 5 hồ sơ; ready \= 5, failed \= 0 |
-| Tái sử dụng | 15 hồ sơ ready, có vector trong collection hiện tại |
-| Đối chiếu lưu trữ | 20/20 hồ sơ được chọn ready; đủ 20 vector, 768 chiều |
-| Thời gian runner | 7,658 giây; gồm xử lý mới, tái sử dụng và tìm kiếm |
-| Kết quả tìm kiếm | 10 hồ sơ xếp hạng; awaiting\_review |
-| Lọc liên hệ trên 20 hồ sơ đọc | 1 URL được thay thế ở 1 hồ sơ |
-| Kiểm thử trước pilot | 70 passed, 8 subtests passed; 5,50 giây trong PowerShell người dùng |
-
-Bảng 12.7 Kết quả pilot có tái sử dụng. Chỉ 5 hồ sơ được xử lý mới, không phải 20 hồ sơ mới. Thời gian 7,658 giây không gồm cập nhật thư viện, pytest, preflight hoặc kiểm tra checksum trước runner; không dùng để suy ra tốc độ xử lý 100.000 hồ sơ. Dòng running trên terminal là ảnh chụp trung gian; file cuối là completed.
-
-Truy vấn “Python developer, at least 3 years, FastAPI” được phân tích thành Python, FastAPI và kinh nghiệm tối thiểu 3 năm. Top 10 có điểm từ 0,249429 đến 0,492117; không hồ sơ nào đạt ngưỡng giải thích 0,5 nên chưa gọi bước giải thích. Checkpoint dừng tại human\_review, approval\_status \= pending, không có lỗi node; chưa duyệt hồ sơ hoặc tạo câu hỏi phỏng vấn.
-
-Kiểm tra model trước pilot: MODEL\_OK sau 1.577,336 ms, tổng 10 token. Đây là usage của phép kiểm tra ngắn, không phải token của 5 CV hoặc truy vấn tìm kiếm. Chưa thu thập token/chi phí toàn pilot, nhãn liên quan hay Precision@k/Recall@k. 70 kiểm thử đạt phản ánh logic kiểm thử có test double tại biên model, không phải độ chính xác trên CV.
-
-SQLite còn 60 bản ghi failed ngoài nhóm 20 hồ sơ được chọn; kết quả này không khẳng định toàn bộ dữ liệu ứng dụng không có lỗi. Search ID: edd6a99b380d426292266df10f7f0167, tạo lúc 2026-10-23T20:38:28Z. Collection: cv\_gemini\_embedding\_2\_768\_v1.
-
-Minh chứng cố định: data/benchmarks/pilot-20-results-20261024.json và pilot-20-verification-20261024.json. Runner đã được sửa để in báo cáo cuối ra terminal; 5 kiểm thử importer/lọc liên hệ chạy lại đều đạt. Bước duyệt và sinh câu hỏi vẫn chờ thao tác của người dùng.
+Chi tiết và chỉ mục bằng chứng: [Kiểm chứng chạy thật 24/10/2026](KIEM_CHUNG_CHAY_THAT_2026-10-24.md). Dữ liệu mới nằm trong `data/benchmarks/proof/live-validation-20261024/`, kèm summary JSON và manifest SHA-256. Số liệu ở các mục 12.1–12.8 giữ ngữ cảnh snapshot buổi sáng.

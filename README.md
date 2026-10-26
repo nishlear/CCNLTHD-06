@@ -29,7 +29,7 @@ uv run uvicorn src.backend.main:app --reload
 
 ## Implemented workflows
 
-- **Ingest:** `Send(process_cv)` processes up to four CVs concurrently. Each subgraph reads PDF text, extracts structured data, validates nonempty `full_name` and `skills`, and retries with missing-field feedback. There are at most **two extraction attempts total**, including the first. Valid CVs are embedded and indexed in Chroma; each file finishes `ready` or `failed` with a reason. An index failure preserves a failed SQLite row and the extracted information.
+- **Ingest:** two phases per bounded input batch. Phase 1 uses `Send(process_cv)` for up to four PDF/text workers: regex contact redaction, whitespace cleanup, one paced Gemini extraction, validation, and a committed SQLite extraction cache. A 429/timeout switches immediately to the pinned Ollama model; invalid output fails the record without another cloud call. A LangGraph barrier waits for every phase-1 branch before phase 2 embeds groups of up to 20 compact profiles in one request and bulk upserts them into Chroma. Each ready checkpoint is committed individually. Failed embedding runs reuse the extraction cache on restart. Threads and processes sharing `app.db` serialize ingest phases with an OS file lock; all application chat calls share a SQLite 12-RPM pacer.
 - **Search:** parse a free-text query into criteria, retrieve up to 20 vectors, score candidates in parallel, rank by descending score then ascending CV ID, retain `top_k`, and explain only scores at least 0.5. Invalid query extraction falls back to semantic search. Stale/failed CVs are omitted; an explanation error leaves `reasons=null` and preserves ranking. Retrieval failure marks the search failed.
 - **Review:** the graph calls `interrupt()` and persists its state using `SqliteSaver`. `search_id` is the checkpoint `thread_id`. Resuming with `Command(resume=...)` generates questions only for approved shortlist IDs, across technical, experience and behavioral categories. Empty approval ends without questions. Each candidate's question-generation failure is isolated.
 - **Recovery:** waiting searches survive process restarts when `app.db` and `checkpoints.db` are retained. Review claims are atomic; repeated or concurrent submissions return 409. If graph completion succeeds but writing business results fails, retrying the same decision reuses the checkpoint questions. Keep the same decision when retrying.
@@ -49,9 +49,15 @@ All paths are relative to the working directory unless absolute.
 | `GEMINI_API_KEY` | unset | Required for new ingest/search operations |
 | `GEMINI_CHAT_MODEL` | `gemini-3.5-flash-lite` | Structured extraction, criteria, explanations, questions |
 | `GEMINI_EMBEDDING_MODEL` | `gemini-embedding-2` | Same model for index and queries |
-| `GEMINI_EMBEDDING_DIMENSIONS` | `768` | Vector size; changing it requires reindexing |
+| `GEMINI_EMBEDDING_DIMENSIONS` | `768` | Fixed vector size; other values rejected |
 | `GEMINI_TIMEOUT_SECONDS` | `60` | Timeout per provider request |
-| `GEMINI_MAX_RETRIES` | `1` | Provider retries, separate from graph attempts |
+| `GEMINI_MAX_RETRIES` | `1` | Embedding SDK retries only; chat SDK attempts fixed to 1; 429 handled separately |
+| `GEMINI_MAX_RPM` | `12` | Shared chat pacer, at least 5 s between admissions; only 1..12 accepted |
+| `OLLAMA_CHAT_MODEL` | `qwen2.5:3b` | Only permitted local model |
+| `OLLAMA_KEEP_ALIVE` | `30m` | Only `30m` or `-1` accepted |
+| `OLLAMA_NUM_CTX` | `4096` | Fixed context size |
+| `OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | Local fallback endpoint |
+| `EMBED_BATCH_SIZE` | `20` | Phase-2 group size, 1..20 |
 | `DATA_DIR` | `data` | Application data directory |
 | `APP_DB_PATH` | `$DATA_DIR/app.db` | Business records |
 | `CHECKPOINT_DB_PATH` | `$DATA_DIR/checkpoints.db` | Durable LangGraph state |
@@ -59,7 +65,7 @@ All paths are relative to the working directory unless absolute.
 | `CHROMA_COLLECTION` | `cv_gemini_embedding_2_768_v1` | Collection with embedding-model metadata |
 | `MIN_SIMILARITY` | `0.55` | Experimental normalized-similarity cutoff |
 
-Changing embedding model requires a new collection and reupload/reindex of CVs. Records created by the old `change me` stubs do not have real text or vectors and must be reuploaded. Never commit `.env` or data files.
+This baseline rejects other chat/embedding models, dimensions and collection names at startup. Records created by the old `change me` stubs do not have real text or vectors and must be reuploaded. Never commit `.env` or data files.
 
 Limits: 20 files per upload, 10 MB per file, 100 PDF pages, 24,000 extracted text characters, 3,000 query characters, `top_k` 1–20, graph recursion limit 25 and maximum concurrency 4. PDF scans need OCR, which is outside scope. Accounts and automatic hiring decisions are also outside scope.
 
@@ -87,7 +93,7 @@ uv run pytest -q
 node --test tests/frontend.test.cjs
 ```
 
-The suite uses actual SQLite, LangGraph, Chroma and PDF parsing, with deterministic doubles at the model/embedding boundaries. It covers the report scores (1.00 and 0.52), bounded extraction retries, empty/stale candidates, failures, review filtering, duplicate submissions, independent threads, a new-process API resume, upload cleanup and PDF-to-review integration. It makes no Google Gemini requests and does not measure model quality.
+The suite uses actual SQLite, LangGraph, Chroma and PDF parsing, with deterministic doubles at the model/embedding boundaries. It covers the report scores (1.00 and 0.52), cloud-to-local failover and two-phase extraction-cache recovery, empty/stale candidates, failures, review filtering, duplicate submissions, independent threads, a new-process API resume, upload cleanup and PDF-to-review integration. It makes no Google Gemini requests and does not measure model quality.
 
 Core scoring and SQLite transaction tests can also run with Python's standard library, without installing application dependencies:
 
@@ -125,16 +131,25 @@ If curl HTTPS works but Python times out, run `python -m scripts.diagnose_gemini
 
 Once PyPI works, install the actual project environment using `data/tools/uv.exe --cache-dir data/uv-cache sync --upgrade --extra research`. Always run installed application commands through `data/tools/uv.exe run --no-sync` so they use the project virtual environment. To compare the official SDK with the stdlib check, run `data/tools/uv.exe run --no-sync python -m scripts.check_gemini_model --transport sdk --timeout 60`. The SDK check explicitly uses the Gemini Developer API, the same short prompt, a timeout in milliseconds and one total attempt without automatic retry. A metadata HTTP 200 is not proof that inference or the CV workflow succeeded. The dataset runner now uses the SDK check after installing dependencies and passing tests, before sending any CVs.
 
-If the SDK reports HTTP 504 / DEADLINE_EXCEEDED, an API deadline was exceeded; it is not a completed model response. Google GenAI SDK 2.33 sets X-Server-Timeout from the configured timeout. To compare a lower-latency supported model once, add `--model gemini-3.5-flash-lite --transport sdk --timeout 60` to the model check. This CLI override does not change the application model; only update `GEMINI_CHAT_MODEL` in `.env` after the alternative model succeeds. Keep each attempt report separate with `--report`.
+If the SDK reports HTTP 504 / DEADLINE_EXCEEDED, an API deadline was exceeded; it is not a completed model response. Google GenAI SDK 2.33 sets X-Server-Timeout from the configured timeout. The diagnostic also accepts only the pinned `gemini-3.5-flash-lite`; alternate model names are rejected before sending a request. Keep each attempt report separate with `--report`.
 
-After that succeeds, run `.\scripts\run-real-data.ps1 -Limit 100` for the actual dataset pilot.
+After that succeeds, run `.\scripts\run-real-data.ps1 -Limit 20` for the actual dataset pilot.
 
 ## Provider migration to Gemini
 
 Create a key at https://aistudio.google.com/apikey and set `GEMINI_API_KEY` in `.env`. `GOOGLE_API_KEY` is accepted as a fallback; an old OpenAI key is never used. The model check uses only Python's standard library and sends no CVs. Do not paste keys into reports or chat.
 
-The application uses `langchain-google-genai>=4.4.2,<5` for native structured chat output and `google-genai>=2.20,<3` for embeddings. Gemini Embedding 2 uses different query/document prefixes and one request per text; no legacy `task_type` is sent to this model. Gemini Embedding 001 is also supported with the corresponding retrieval task types. Embeddings are normalized and their dimensions checked.
+The application calls `google-genai` for native JSON chat and embeddings, and the Ollama HTTP API for local fallback. Both chat providers receive the same prompt and short-key JSON Schema and validate through the same Pydantic model. Gemini Embedding 2 uses different query/document prefixes. Explicit `Content` boundaries produce separate vectors in one `batchEmbedContents` request; no legacy `task_type` is sent. Embeddings are normalized and their dimensions checked. Other embedding models are rejected.
 
 A new collection includes provider, model, dimension and format metadata. Old collections remain separate; incompatible metadata is rejected. The corpus runner skips ready records only when their text matches and their vector exists in the current collection. The threshold 0.55 remains experimental and must be recalibrated for Gemini embeddings.
 
 `uv.lock` still requires regeneration with working PyPI access: run `uv sync --upgrade --extra research`. Until that succeeds, do not use `uv sync --locked` or claim dependency installation/integration is verified. Historical experiment logs keep the provider used at the time and are not relabelled as successful Gemini runs.
+
+
+## Fixed dual-model ingest baseline
+
+See [docs/INGEST_RULES.md](docs/INGEST_RULES.md) for the rule-by-rule audit, two-phase recovery contract and verification limits.
+
+Install the only local fallback model once with `ollama pull qwen2.5:3b`, and keep the Ollama server running. The application never requests another local model. Each local generation sends `format="json"`, temperature 0, context 4096 and `keep_alive="30m"` (or `-1`). Local generations are serialized within each app process. Docker needs an Ollama URL reachable from inside the container, such as `http://host.docker.internal:11434` for an Ollama server on the Windows host.
+
+Embedding rate limits use three waits of 10/20/40 seconds plus 1..3 seconds of random jitter. No local embedding fallback is used. Chat and embedding quotas remain provider-controlled and are not transferred between models. Keep `app.db`, `app.ingest.lock` (while running) and Chroma on the same host for coordination; separate databases do not share pacing or phase locks.

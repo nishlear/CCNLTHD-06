@@ -38,6 +38,7 @@ class GeminiServiceTests(unittest.TestCase):
         settings.OLLAMA_NUM_CTX = 4096
         settings.OLLAMA_TIMEOUT_SECONDS = 180
         settings.EMBED_TEXT_MAX_WORDS = 300
+        settings.EMBED_BATCH_SIZE = 20
         settings.EMBED_BACKOFF_SECONDS = (10, 20, 40)
         settings.EMBED_BACKOFF_JITTER = (1.0, 3.0)
         settings.CHROMA_DIR = Path("data/test-gemini-unused")
@@ -51,6 +52,7 @@ class GeminiServiceTests(unittest.TestCase):
         with patch.dict(sys.modules, {"src.backend.config": settings, "src.backend.tracing": tracing}), \
                 patch.object(backend, "config", settings, create=True):
             spec.loader.exec_module(self.services)
+        self.services.gemini_pacer = Mock(return_value=Mock())
         self.settings = settings
 
     def sdk_modules(self):
@@ -245,3 +247,29 @@ class GeminiServiceTests(unittest.TestCase):
         embedding.embed_documents.assert_called_once_with(["Dev | Skills: Python | Experience: unknown |"])
         store.upsert.assert_called_once_with(ids=["cv"], embeddings=[[1., 0., 0.]],
                                              metadatas=[{"doc_format": "compact-v2"}])
+
+
+    def test_query_embedding_429_backoff_never_calls_local_or_retries_chroma(self):
+        embedding = Mock()
+        embedding.embed_query.side_effect = [FakeAPIError(429), FakeAPIError(429), [1., 0.]]
+        store = Mock()
+        store.count.return_value = 1
+        store.query.return_value = {"ids": [["cv"]], "distances": [[0.]]}
+        self.settings.MIN_SIMILARITY = .55
+        with patch.object(self.services, "embeddings", return_value=embedding), \
+                patch.object(self.services, "collection", return_value=store), \
+                patch.object(self.services, "_sleep") as sleep, \
+                patch.object(self.services.random, "uniform", return_value=2.), \
+                patch.object(self.services, "_ollama_post") as local:
+            self.assertEqual(self.services.vector_search("Python", 1), [{"cv_id": "cv", "similarity": 1.}])
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [12., 22.])
+        self.assertEqual(embedding.embed_query.call_count, 3)
+        store.query.assert_called_once()
+        local.assert_not_called()
+
+    def test_ollama_rejects_non_object_and_error_responses_before_reporting_ready(self):
+        for payload in (None, [], {"error": "model missing"}):
+            with self.subTest(payload=payload), \
+                    patch.object(self.services.urllib.request, "urlopen") as request:
+                request.return_value.__enter__.return_value.read.return_value = json.dumps(payload).encode()
+                self.assertFalse(self.services.ollama_warmup())

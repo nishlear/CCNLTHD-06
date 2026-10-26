@@ -11,6 +11,11 @@ from scripts.check_gemini_model import check_model
 
 
 class GeminiModelCheckTests(unittest.TestCase):
+    def setUp(self):
+        pacer = patch("scripts.check_gemini_model.pace_model_check")
+        self.pacer = pacer.start()
+        self.addCleanup(pacer.stop)
+
     def test_success_records_usage_and_sends_key_only_as_header(self):
         response = io.BytesIO(json.dumps({"responseId": "fixture-response", "modelVersion": "fixture-model",
             "candidates": [{"finishReason": "STOP", "content": {"parts": [{"text": "MODEL_OK"}]}}],
@@ -18,7 +23,7 @@ class GeminiModelCheckTests(unittest.TestCase):
         response.status = 200
         response.headers = {"x-request-id": "fixture-request-id"}
         with patch("scripts.check_gemini_model.urllib.request.urlopen", return_value=response) as call:
-            report = check_model("gemini-3.8-flash", "test-only-secret", timeout_seconds=60)
+            report = check_model("gemini-3.5-flash-lite", "test-only-secret", timeout_seconds=60)
         self.assertEqual(call.call_args.kwargs["timeout"], 60)
         request = call.call_args.args[0]
         payload = json.loads(request.data)
@@ -34,27 +39,27 @@ class GeminiModelCheckTests(unittest.TestCase):
             io.BytesIO(json.dumps({"error": {"message": "Invalid key: test-only-secret",
                 "status": "INVALID_ARGUMENT", "details": [{"reason": "API_KEY_INVALID"}]}}).encode()))
         with patch("scripts.check_gemini_model.urllib.request.urlopen", side_effect=error):
-            report = check_model("gemini-3.8-flash", "test-only-secret")
+            report = check_model("gemini-3.5-flash-lite", "test-only-secret")
         self.assertEqual(report["http_status"], 400)
         self.assertEqual(report["api_error_reason"], "API_KEY_INVALID")
         self.assertNotIn("test-only-secret", json.dumps(report))
 
     def test_dns_missing_key_and_incomplete_response_are_not_success(self):
         with patch("scripts.check_gemini_model.urllib.request.urlopen", side_effect=urllib.error.URLError(socket.gaierror(11001, "DNS failed"))):
-            self.assertEqual(check_model("gemini-3.8-flash", "test-key")["status"], "network_error")
+            self.assertEqual(check_model("gemini-3.5-flash-lite", "test-key")["status"], "network_error")
         with patch("scripts.check_gemini_model.urllib.request.urlopen") as call:
-            self.assertEqual(check_model("gemini-3.8-flash", "")["status"], "missing_api_key")
+            self.assertEqual(check_model("gemini-3.5-flash-lite", "")["status"], "missing_api_key")
             call.assert_not_called()
         response = io.BytesIO(json.dumps({"modelVersion": "fixture-model", "candidates": [
             {"finishReason": "MAX_TOKENS", "content": {"parts": [{"text": "partial"}]}}]}).encode())
         response.status = 200
         response.headers = {}
         with patch("scripts.check_gemini_model.urllib.request.urlopen", return_value=response):
-            self.assertEqual(check_model("gemini-3.8-flash", "test-key")["status"], "blocked_or_incomplete_response")
+            self.assertEqual(check_model("gemini-3.5-flash-lite", "test-key")["status"], "blocked_or_incomplete_response")
 
     def test_timeout_is_not_inference_success_and_does_not_expose_key(self):
         with patch("scripts.check_gemini_model.urllib.request.urlopen", side_effect=TimeoutError()):
-            report = check_model("gemini-3.8-flash", "test-only-secret", timeout_seconds=60)
+            report = check_model("gemini-3.5-flash-lite", "test-only-secret", timeout_seconds=60)
         self.assertEqual(report["status"], "network_error")
         self.assertEqual(report["error_type"], "TimeoutError")
         self.assertEqual(report["timeout_seconds"], 60)
@@ -63,5 +68,12 @@ class GeminiModelCheckTests(unittest.TestCase):
     def test_invalid_timeout_never_sends_a_request(self):
         with patch("scripts.check_gemini_model.urllib.request.urlopen") as call:
             for timeout in (0, -1, float("nan"), float("inf")):
-                self.assertEqual(check_model("gemini-3.8-flash", "test-key", timeout)["status"], "invalid_timeout")
+                self.assertEqual(check_model("gemini-3.5-flash-lite", "test-key", timeout)["status"], "invalid_timeout")
             call.assert_not_called()
+
+    def test_other_models_are_rejected_before_network_request(self):
+        with patch("scripts.check_gemini_model.urllib.request.urlopen") as call:
+            report = check_model("gemini-3.8-flash", "test-key")
+        self.assertEqual(report["status"], "model_not_allowed")
+        self.assertEqual(report["model_requests_attempted"], 0)
+        call.assert_not_called()

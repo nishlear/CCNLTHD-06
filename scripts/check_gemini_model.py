@@ -16,6 +16,13 @@ from scripts.check_runtime import gemini_api_key, load_environment
 BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/"
 
 
+def pace_model_check():
+    # Keep this diagnostic stdlib-only while sharing the application's clock.
+    from src.backend.cloud_pacing import wait_for_slot
+    path = Path(os.getenv("APP_DB_PATH", str(Path(os.getenv("DATA_DIR", "data")) / "app.db")))
+    wait_for_slot(path, "gemini-3.5-flash-lite", int(os.getenv("GEMINI_MAX_RPM", "12")))
+
+
 def check_model(model, key, timeout_seconds=60.0, transport="urllib"):
     if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
         return {"status": "invalid_timeout", "model_requests_attempted": 0, "cv_records_sent": 0}
@@ -24,6 +31,8 @@ def check_model(model, key, timeout_seconds=60.0, transport="urllib"):
     model = model.removeprefix("models/")
     if not re.fullmatch(r"gemini-[a-zA-Z0-9._-]+", model):
         return {"status": "invalid_model_name", "model_requests_attempted": 0, "cv_records_sent": 0}
+    if model != "gemini-3.5-flash-lite":
+        return {"status": "model_not_allowed", "model_requests_attempted": 0, "cv_records_sent": 0}
     endpoint = BASE_URL + model + ":generateContent"
     report = {"checked_at_utc": datetime.now(timezone.utc).isoformat(),
               "provider": "google_gemini", "endpoint": endpoint, "requested_model": model,
@@ -32,6 +41,10 @@ def check_model(model, key, timeout_seconds=60.0, transport="urllib"):
               "scope": "One short inference check, not a CV workflow or embedding evaluation."}
     if not key:
         return {**report, "status": "missing_api_key"}
+    try:
+        pace_model_check()
+    except Exception as exc:
+        return {**report, "status": "pacing_error", "error_type": type(exc).__name__}
     if transport == "sdk":
         started = perf_counter()
         check_sdk(model, key, timeout_seconds, report)

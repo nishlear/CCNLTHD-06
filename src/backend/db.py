@@ -26,6 +26,17 @@ CREATE TABLE IF NOT EXISTS cv (
 );
 CREATE INDEX IF NOT EXISTS cv_created ON cv(created_at DESC, id);
 CREATE INDEX IF NOT EXISTS cv_status_created ON cv(status, created_at DESC, id);
+CREATE TABLE IF NOT EXISTS extraction_cache (
+    cv_id TEXT PRIMARY KEY,
+    fingerprint TEXT NOT NULL,
+    extracted TEXT NOT NULL,
+    source TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS api_pacing (
+    name TEXT PRIMARY KEY,
+    next_at REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS search (
     id TEXT PRIMARY KEY,
     query TEXT NOT NULL,
@@ -118,6 +129,7 @@ def get_cv(cv_id: str) -> dict | None:
 
 def delete_cv(cv_id: str) -> bool:
     with connect() as conn:
+        conn.execute("DELETE FROM extraction_cache WHERE cv_id = ?", (cv_id,))
         return conn.execute("DELETE FROM cv WHERE id = ?", (cv_id,)).rowcount > 0
 
 
@@ -224,3 +236,33 @@ def get_questions(search_id: str) -> list[dict]:
             (search_id,),
         )
         return [dict(r) for r in rows]
+
+
+def save_extraction(cv_id: str, fingerprint: str, extracted: dict, source: str | None) -> None:
+    """Commit each validated extraction before any embedding request starts."""
+    with connect() as conn:
+        conn.execute("INSERT OR REPLACE INTO extraction_cache VALUES (?,?,?,?,?)",
+                     (cv_id, fingerprint, json.dumps(extracted, ensure_ascii=False), source, now()))
+
+
+def get_extraction(cv_id: str, fingerprint: str) -> dict | None:
+    with connect() as conn:
+        row = conn.execute("SELECT extracted, source FROM extraction_cache WHERE cv_id=? AND fingerprint=?",
+                           (cv_id, fingerprint)).fetchone()
+    if not row:
+        return None
+    try:
+        extracted = json.loads(row["extracted"])
+        return {"extracted": extracted, "source": row["source"]} if isinstance(extracted, dict) and extracted else None
+    except (TypeError, ValueError):
+        return None
+
+
+def claim_cloud_slot(name: str, interval: float, current_time: float | None = None) -> float:
+    """Atomic pacing for all callers sharing app.db; no transaction while sleeping.
+
+    Waiters re-check on wakeup rather than reserving slots (which can cause a
+    burst after a delayed wakeup). Also usable before application init_db().
+    """
+    from .cloud_pacing import claim_slot
+    return claim_slot(APP_DB_PATH, name, interval, current_time)

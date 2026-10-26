@@ -38,10 +38,15 @@ def completed_response():
 
 
 class GeminiSDKCheckTests(unittest.TestCase):
+    def setUp(self):
+        pacer = patch("scripts.check_gemini_model.pace_model_check")
+        self.pacer = pacer.start()
+        self.addCleanup(pacer.stop)
+
     def test_sdk_uses_explicit_key_developer_api_ms_timeout_and_no_retries(self):
         modules, genai, call = sdk_modules(completed_response())
         with patch.dict("sys.modules", modules):
-            result = check_model("gemini-3.8-flash", "fixture-secret", 60, transport="sdk")
+            result = check_model("gemini-3.5-flash-lite", "fixture-secret", 60, transport="sdk")
         self.assertEqual(result["status"], "succeeded")
         self.assertEqual(result["usage"]["total_token_count"], 11)
         self.assertEqual(result["model_requests_attempted"], 1)
@@ -57,7 +62,7 @@ class GeminiSDKCheckTests(unittest.TestCase):
     def test_sdk_api_error_preserves_status_but_never_message(self):
         modules, _, call = sdk_modules(error=FakeAPIError("fixture-secret"))
         with patch.dict("sys.modules", modules):
-            result = check_model("gemini-3.8-flash", "fixture-secret", transport="sdk")
+            result = check_model("gemini-3.5-flash-lite", "fixture-secret", transport="sdk")
         self.assertEqual(result["status"], "api_error")
         self.assertEqual(result["http_status"], 429)
         self.assertEqual(result["api_error_status"], "RESOURCE_EXHAUSTED")
@@ -67,7 +72,7 @@ class GeminiSDKCheckTests(unittest.TestCase):
     def test_sdk_timeout_is_sanitized_and_never_retried(self):
         modules, _, call = sdk_modules(error=TimeoutError("fixture-secret"))
         with patch.dict("sys.modules", modules):
-            result = check_model("gemini-3.8-flash", "fixture-secret", transport="sdk")
+            result = check_model("gemini-3.5-flash-lite", "fixture-secret", transport="sdk")
         self.assertEqual(result["status"], "client_error")
         self.assertEqual(result["error_type"], "TimeoutError")
         self.assertNotIn("fixture-secret", json.dumps(result))
@@ -75,7 +80,7 @@ class GeminiSDKCheckTests(unittest.TestCase):
 
     def test_sdk_missing_dependency_does_not_attempt_inference(self):
         with patch("builtins.__import__", side_effect=ImportError("fixture-secret")):
-            result = check_model("gemini-3.8-flash", "fixture-secret", transport="sdk")
+            result = check_model("gemini-3.5-flash-lite", "fixture-secret", transport="sdk")
         self.assertEqual(result["status"], "missing_dependency")
         self.assertEqual(result["model_requests_attempted"], 0)
         self.assertNotIn("fixture-secret", json.dumps(result))
@@ -85,5 +90,5 @@ class GeminiSDKCheckTests(unittest.TestCase):
         data["candidates"][0]["finish_reason"] = "MAX_TOKENS"
         modules, _, _ = sdk_modules(data)
         with patch.dict("sys.modules", modules):
-            result = check_model("gemini-3.8-flash", "fixture-secret", transport="sdk")
+            result = check_model("gemini-3.5-flash-lite", "fixture-secret", transport="sdk")
         self.assertEqual(result["status"], "blocked_or_incomplete_response")
