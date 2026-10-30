@@ -21,18 +21,15 @@ QUERIES = {
 }
 
 
-def main():
-    parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--input",type=Path,default=Path("data/datasets/djinni/sample-100000.jsonl"))
-    parser.add_argument("--database",type=Path,default=Path("data/benchmarks/djinni_100k_fts.sqlite"))
-    parser.add_argument("--report",type=Path,default=Path("data/benchmarks/djinni_100k_fts.json"))
-    parser.add_argument("--repeats",type=int,default=20)
-    parser.add_argument("--redact-contacts",action="store_true",help="Mask recognizable contacts before indexing; includes filter time in build time")
-    args=parser.parse_args()
+def benchmark_dataset(input_path, database, report, repeats=20, redact=True, progress=None):
+    """Shared lexical benchmark. The GUI uses the same measurements as the CLI."""
+    from types import SimpleNamespace
+    args = SimpleNamespace(input=Path(input_path), database=Path(database), report=Path(report),
+                           repeats=repeats, redact_contacts=redact)
     if args.database.exists():
-        parser.error("benchmark database already exists; choose another path")
+        raise ValueError("benchmark database already exists; choose another path")
     if args.repeats < 1:
-        parser.error("repeats must be positive")
+        raise ValueError("repeats must be positive")
     args.database.parent.mkdir(parents=True,exist_ok=True)
     started=perf_counter()
     conn=sqlite3.connect(args.database)
@@ -56,15 +53,21 @@ def main():
                 if len(batch)==1000:
                     conn.executemany("INSERT INTO profiles VALUES (?,?,?)",batch)
                     count+=len(batch); batch=[]
+                    if progress:
+                        progress(count)
                     if count % 20000 == 0:
                         print(json.dumps({"indexed":count}),flush=True)
         if batch:
             conn.executemany("INSERT INTO profiles VALUES (?,?,?)",batch)
             count+=len(batch)
+        if progress:
+            progress(count)
         conn.commit()
         build_seconds=perf_counter()-started
         results=[]
         for name,query in QUERIES.items():
+            if progress:
+                progress(count)
             total=conn.execute("SELECT count(*) FROM profiles WHERE profiles MATCH ?",(query,)).fetchone()[0]
             elapsed=[]; rows=[]
             for _ in range(args.repeats):
@@ -93,6 +96,18 @@ def main():
                           "end-to-end run. No relevance labels: precision, recall and nDCG are not measured."}
     args.report.parent.mkdir(parents=True,exist_ok=True)
     args.report.write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding="utf-8")
+    return report
+
+
+def main():
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--input",type=Path,default=Path("data/datasets/djinni/sample-100000.jsonl"))
+    parser.add_argument("--database",type=Path,default=Path("data/benchmarks/djinni_100k_fts.sqlite"))
+    parser.add_argument("--report",type=Path,default=Path("data/benchmarks/djinni_100k_fts.json"))
+    parser.add_argument("--repeats",type=int,default=20)
+    parser.add_argument("--redact-contacts",action="store_true",help="Mask recognizable contacts before indexing; includes filter time in build time")
+    args=parser.parse_args()
+    report = benchmark_dataset(args.input, args.database, args.report, args.repeats, args.redact_contacts)
     print(json.dumps({**report,"queries":[{k:v for k,v in result.items() if k!='top10'} for result in results]},ensure_ascii=False))
 
 

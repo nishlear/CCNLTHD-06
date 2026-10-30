@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from . import db
-from .routers import cvs, searches
+from .routers import corpus, cvs, searches
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 
@@ -19,6 +19,7 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="JD Matching", lifespan=lifespan)
 app.include_router(cvs.router)
 app.include_router(searches.router)
+app.include_router(corpus.router)
 
 
 @app.get("/health")

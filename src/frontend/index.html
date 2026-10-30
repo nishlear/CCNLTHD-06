@@ -11,12 +11,73 @@
     <h1>JD Matching</h1>
     <nav>
       <button class="tab active" data-tab="cvs">CV</button>
+      <button class="tab" data-tab="corpus">Corpus</button>
       <button class="tab" data-tab="search">Tìm kiếm</button>
       <button class="tab" data-tab="history">Lịch sử</button>
     </nav>
   </header>
 
   <main>
+    <section id="tab-corpus" class="panel" aria-labelledby="corpus-title">
+      <div class="row-between corpus-heading">
+        <div><h2 id="corpus-title">Kho hồ sơ ứng viên</h2>
+          <p class="muted">Chuẩn bị dữ liệu, xử lý từng lô nhỏ và trình bày kết quả ngay trên giao diện.</p></div>
+        <button id="corpus-refresh" type="button">Làm mới</button>
+      </div>
+      <p id="corpus-error" class="err" role="alert" hidden></p>
+      <div id="corpus-summary" class="corpus-stats" aria-live="polite"></div>
+      <div class="card corpus-picker">
+        <label for="corpus-select">Tập hồ sơ</label><select id="corpus-select" aria-label="Tập hồ sơ"></select>
+        <span id="corpus-source" class="muted"></span>
+      </div>
+      <div class="corpus-grid">
+        <form id="corpus-prepare-form" class="corpus-card">
+          <span class="step-label">01 · Chuẩn bị</span><h3>Tạo tập hồ sơ</h3>
+          <p>Lọc hồ sơ tiếng Anh hợp lệ, loại trùng và lấy mẫu từ dữ liệu nguồn đã có trên máy. Giữ nguyên các tập cũ.</p>
+          <label>Số hồ sơ lấy mẫu <input id="corpus-sample-count" type="number" min="1" max="100000" value="100000" required></label>
+          <details><summary>Tùy chọn lấy mẫu</summary><label>Mã lấy mẫu <input id="corpus-seed" type="number" min="0" max="2147483647" value="20261023" required></label></details>
+          <button type="submit" data-corpus-action="prepare">Tạo tập mới</button>
+        </form>
+        <form id="corpus-verify-form" class="corpus-card">
+          <span class="step-label">02 · Kiểm tra</span><h3>Xác minh dữ liệu</h3>
+          <p>Đối chiếu dấu kiểm tra với bản chuẩn bị để phát hiện dữ liệu bị thay đổi trước khi xử lý.</p>
+          <p class="muted">Chạy cục bộ, không gọi model.</p>
+          <button type="submit" data-corpus-action="verify">Kiểm tra tập đang chọn</button>
+        </form>
+        <form id="corpus-ingest-form" class="corpus-card">
+          <span class="step-label">03 · Xử lý CV</span><h3>Trích xuất và tạo vector</h3>
+          <p>Mỗi lượt xử lý tối đa 50 hồ sơ. Kết quả được lưu sau mỗi lô; tự bỏ qua hồ sơ đã sẵn sàng và còn vector.</p>
+          <div class="corpus-inputs">
+            <label>Số CV/lượt <input id="corpus-limit" type="number" min="1" max="50" value="20" required></label>
+            <label>Số CV/lô <input id="corpus-batch-size" type="number" min="1" max="20" value="5" required></label>
+          </div>
+          <label>Cách chọn hồ sơ <select id="corpus-mode"><option value="next">Lô tiếp theo từ vị trí đã lưu</option><option value="range">Chọn phạm vi / thử lại hồ sơ lỗi</option></select></label>
+          <label id="corpus-offset-label" hidden>Vị trí bắt đầu (tính từ 1) <input id="corpus-offset" type="number" min="1" max="100001" value="1" required></label>
+          <p class="muted">Chế độ chọn phạm vi xét đúng số vị trí đã chọn. Hồ sơ lỗi ở lượt trước có thể thử lại bằng chế độ này.</p>
+          <p class="muted">Gọi Gemini để trích xuất và tạo embedding từ nội dung đã lọc liên hệ. Có thể phát sinh chi phí API.</p>
+          <button type="submit" class="primary" data-corpus-action="ingest">Chạy extract + embed</button>
+        </form>
+        <form id="corpus-benchmark-form" class="corpus-card">
+          <span class="step-label">04 · Đo kết quả</span><h3>Đo tìm kiếm từ khóa</h3>
+          <p>Lọc liên hệ, tạo chỉ mục riêng và đo 5 nhóm truy vấn. Kết quả có trung vị và p95 để trình bày.</p>
+          <label>Số lần đo mỗi truy vấn <input id="corpus-repeats" type="number" min="1" max="100" value="20" required></label>
+          <p class="muted">Chạy cục bộ bằng FTS5/BM25; không đo chất lượng LLM hoặc tìm kiếm vector.</p>
+          <button type="submit" data-corpus-action="benchmark">Chạy benchmark</button>
+        </form>
+      </div>
+      <section id="corpus-job" class="corpus-card corpus-job" hidden aria-live="polite"></section>
+      <div class="row-between"><h2>Xem trước hồ sơ</h2><span class="muted">Văn bản corpus, không phải PDF gốc</span></div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Vị trí</th><th>Hồ sơ</th><th>Vai trò</th><th>Trạng thái</th><th>Trích đoạn đã lọc liên hệ</th></tr></thead>
+        <tbody id="corpus-preview"></tbody>
+      </table></div>
+      <div class="row-between actions"><button id="corpus-prev" type="button">Trang trước</button><span id="corpus-page" class="muted"></span><button id="corpus-next" type="button">Trang sau</button></div>
+      <div class="row-between"><h2>Lịch sử thao tác corpus</h2><button id="corpus-search" type="button">Tìm kiếm trên CV đã xử lý</button></div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Thao tác</th><th>Tập hồ sơ</th><th>Trạng thái</th><th>Kết quả</th><th></th></tr></thead>
+        <tbody id="corpus-history"></tbody>
+      </table></div>
+    </section>
     <!-- CVs -->
     <section id="tab-cvs" class="panel active">
       <form id="upload-form" class="card">
@@ -72,5 +133,6 @@
   </dialog>
   <div id="toast" hidden></div>
   <script src="app.js"></script>
+  <script src="corpus.js"></script>
 </body>
 </html>

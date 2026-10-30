@@ -6,6 +6,7 @@ const path = require("node:path");
 
 function frontend(responses = {}) {
   const elements = new Map();
+  const requests = [];
   const element = (selector) => {
     if (!elements.has(selector)) elements.set(selector, {
       value: "", innerHTML: "", textContent: "", files: [],
@@ -19,10 +20,14 @@ function frontend(responses = {}) {
   const context = vm.createContext({
     document: { querySelector: element, querySelectorAll: () => [] },
     location: { hash: "" }, history, setTimeout, clearTimeout,
-    fetch: async (url) => ({ status: 200, ok: true, json: async () => responses[url] || responses[url.split("?")[0]] || [] }),
+    fetch: async (url, opts = {}) => {
+      requests.push({ url, ...opts });
+      return { status: 200, ok: true, json: async () => responses[url] || responses[url.split("?")[0]] || [] };
+    },
   });
   vm.runInContext(fs.readFileSync(path.join(__dirname, "../src/frontend/app.js"), "utf8"), context);
-  return { context, element, history };
+  vm.runInContext(fs.readFileSync(path.join(__dirname, "../src/frontend/corpus.js"), "utf8"), context);
+  return { context, element, history, requests };
 }
 
 test("CV list opens a detail action and escapes names", async () => {
@@ -31,6 +36,44 @@ test("CV list opens a detail action and escapes names", async () => {
   await vm.runInContext("loadCVs()", context);
   assert.match(element("#cv-rows").innerHTML, /data-view="cv-a"/);
   assert.match(element("#cv-rows").innerHTML, /&lt;Candidate&gt;/);
+});
+
+test("corpus console restores saved jobs, escapes preview and does not start work on read", async () => {
+  const { context, element, requests } = frontend({
+    "/corpus": { corpora: [{id:"sample",records:20,next_record:5}], application_counts:{ready:5},source_available:true,jobs:[] },
+    "/corpus/sample/preview": {rows:[{record:1,name:"<Candidate>",status:"not_processed",excerpt:"<script>"}],offset:0,total:20},
+  });
+  await vm.runInContext("loadCorpus()",context);
+  assert.match(element("#corpus-summary").innerHTML,/Hồ sơ trong tập đang chọn/);
+  assert.match(element("#corpus-preview").innerHTML,/&lt;Candidate&gt;/);
+  assert.doesNotMatch(element("#corpus-preview").innerHTML,/<script>/);
+  assert.equal(element("#corpus-next").disabled,false);
+  assert.equal(requests.filter(r => r.method === "POST").length,0);
+});
+
+test("corpus ingest submits numeric batch selection through API", async () => {
+  const {context,element,requests} = frontend({
+    "/corpus/jobs": {id:"job1"},
+    "/corpus": {corpora:[{id:"sample",records:20,next_record:0}],source_available:true,application_counts:{},jobs:[]},
+  });
+  element("#corpus-select").value="sample";
+  element("#corpus-limit").value="10";
+  element("#corpus-batch-size").value="5";
+  element("#corpus-mode").value="range";
+  element("#corpus-offset").value="21";
+  await vm.runInContext("submitCorpus('ingest')",context);
+  const post=requests.find(r=>r.url==="/corpus/jobs");
+  assert.deepEqual(JSON.parse(post.body),{action:"ingest",corpus_id:"sample",limit:10,batch_size:5,mode:"range",offset:20});
+});
+
+test("corpus benchmark shows measured latency and keeps its scope visible", () => {
+  const {context,element} = frontend();
+  vm.runInContext(`renderCorpusJob({id:'abc',action:'benchmark',status:'completed',phase:'Đã hoàn tất',
+    processed:0,total:20,progress:20,result:{records:20,query_repeats:2,build_seconds:1,
+    queries:[{query:'Python AND FastAPI',matches:3,p50_ms:0.4,p95_ms:0.7}]}})`,context);
+  assert.match(element("#corpus-job").innerHTML,/0.7/);
+  assert.match(element("#corpus-job").innerHTML,/không gồm độ trễ LLM/);
+  assert.match(element("#corpus-job").innerHTML,/corpus\/jobs\/abc\/report/);
 });
 
 test("CV detail displays unknown data and opens its dialog", async () => {

@@ -5,9 +5,10 @@ ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy DATA_DIR=/app/data
 
 # Install deps first so this layer is cached when only code changes
 COPY pyproject.toml uv.lock ./
-RUN uv sync --no-install-project --no-dev
+RUN uv sync --no-install-project --no-dev --extra research
 
 COPY src ./src
+COPY scripts ./scripts
 
 EXPOSE 8000
 CMD ["/app/.venv/bin/uvicorn", "src.backend.main:app", "--host", "0.0.0.0", "--port", "8000"]

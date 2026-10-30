@@ -2,6 +2,8 @@ const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const badge = (s) => `<span class="badge s-${esc(s)}">${esc(s)}</span>`;
 const chips = (arr, cls = "") => (arr || []).map((x) => `<span class="chip ${cls}">${esc(x)}</span>`).join("");
+let corpusVisible = false;
+let corpusPoll;
 
 async function api(path, opts = {}) {
   const res = await fetch(path, opts);
@@ -28,6 +30,13 @@ function showTab(name) {
   document.querySelectorAll(".panel").forEach((p) => p.classList.toggle("active", p.id === `tab-${name}`));
   if (name === "cvs") loadCVs();
   if (name === "history") loadHistory();
+  corpusVisible = name === "corpus";
+  if (corpusVisible) {
+    history.replaceState(null, "", "#corpus");
+    loadCorpus();
+  }
+  else clearTimeout(corpusPoll);
+  if (!corpusVisible && name !== "search" && location.hash === "#corpus") history.replaceState(null, "", "#");
 }
 document.querySelectorAll(".tab").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
 
@@ -277,6 +286,6 @@ $("#close-cv").addEventListener("click", () => $("#cv-dialog").close());
 const initialSearch = location.hash.match(/^#search=(.+)$/);
 if (initialSearch) {
   openSearch(decodeURIComponent(initialSearch[1])).catch((err) => toast(err.message));
-} else {
+} else if (location.hash !== "#corpus") {
   loadCVs();
 }

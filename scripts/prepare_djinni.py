@@ -23,12 +23,14 @@ def sha256_file(path):
     return digest.hexdigest()
 
 
-def sample_records(rows, limit, seed, min_chars=80, max_chars=24000):
+def sample_records(rows, limit, seed, min_chars=80, max_chars=24000, progress=None):
     rng = random.Random(seed)
     sample, seen_ids, seen_text = [], set(), set()
     counts = Counter()
     for row in rows:
         counts["source_rows"] += 1
+        if progress and counts["source_rows"] % 1000 == 0:
+            progress(counts["source_rows"])
         text = str(row.get("CV") or "").strip()
         source_id = str(row.get("id") or "").strip()
         position = str(row.get("Position") or "").strip()
@@ -70,17 +72,12 @@ def sample_records(rows, limit, seed, min_chars=80, max_chars=24000):
     return sample, dict(counts)
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source", type=Path, default=Path("data/datasets/djinni/train.parquet"))
-    parser.add_argument("--output", type=Path, default=Path("data/datasets/djinni/sample-100000.jsonl"))
-    parser.add_argument("--limit", type=int, default=100000)
-    parser.add_argument("--seed", type=int, default=20261023)
-    args = parser.parse_args()
-    if args.limit < 1:
-        parser.error("limit must be positive")
-    if args.output.exists():
-        parser.error("output already exists; choose another output path")
+def prepare_dataset(source, output, limit=100000, seed=20261023, progress=None):
+    """Shared CLI/GUI operation; always writes a new sample, never overwrites one."""
+    from types import SimpleNamespace
+    args = SimpleNamespace(source=Path(source), output=Path(output), limit=limit, seed=seed)
+    if limit < 1 or args.output.exists():
+        raise ValueError("Positive limit and a new output path are required")
     import pyarrow.parquet as pq
     started = perf_counter()
     digest = sha256_file(args.source)
@@ -88,7 +85,7 @@ def main():
         raise ValueError("Dataset SHA256 differs from the verified source")
     parquet = pq.ParquetFile(args.source)
     rows = (row for batch in parquet.iter_batches(batch_size=1024) for row in batch.to_pylist())
-    sample, counts = sample_records(rows, args.limit, args.seed)
+    sample, counts = sample_records(rows, args.limit, args.seed, progress=progress)
     if len(sample) != args.limit:
         raise ValueError(f"Only {len(sample)} eligible unique CVs; requested {args.limit}")
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -116,6 +113,19 @@ def main():
     }
     manifest_path = args.output.with_suffix(".manifest.json")
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    return manifest
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--source", type=Path, default=Path("data/datasets/djinni/train.parquet"))
+    parser.add_argument("--output", type=Path, default=Path("data/datasets/djinni/sample-100000.jsonl"))
+    parser.add_argument("--limit", type=int, default=100000)
+    parser.add_argument("--seed", type=int, default=20261023)
+    args = parser.parse_args()
+    if args.limit < 1 or args.output.exists():
+        parser.error("limit must be positive; output must not already exist")
+    manifest = prepare_dataset(args.source, args.output, args.limit, args.seed)
     print(json.dumps({key: value for key, value in manifest.items() if key != "source_categories"}, ensure_ascii=False))
 
 

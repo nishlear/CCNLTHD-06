@@ -104,6 +104,20 @@ python -m unittest discover -s tests -p test_database.py -v
 
 ## Real 100,000-profile corpus
 
+### Corpus GUI
+
+Open the **Corpus** tab to perform corpus operations without typing script commands:
+
+- **Create sample:** uses the local `data/datasets/djinni/train.parquet`, filters valid unique English profiles and creates a new JSONL/manifest pair. Existing samples are preserved. Local setup needs `uv sync --locked --extra research`; Docker includes this dependency.
+- **Verify:** checks the selected JSONL against its manifest checksum, without model requests.
+- **Extract + embed:** choose 1–50 profiles per run and 1–20 per batch. The default is 20 profiles in batches of 5. The next-run mode remembers the position after each saved batch, skips matching ready rows with existing vectors, and advances to new work. To retry failures or revisit earlier records, use **Choose range** with a 1-based starting position; the limit then bounds the source range, including ready rows skipped within it. This does not change the forward cursor.
+- **Benchmark:** runs the same FTS5/BM25 baseline as `scripts.benchmark_corpus`, with contact filtering, five query groups, p50/p95 and separate output files per run. No LLM/embedding requests are made.
+- **Track jobs:** progress, ready/failed/skipped counts, graceful stop after the current batch, saved history and downloadable JSON reports. Results and cursors persist in `data/corpus_jobs.db` alongside `app.db`; interrupted server jobs become resumable via a new run after their 60-second lease expires. Only one corpus job runs at a time across server workers.
+
+Prepared samples are discovered in the corpus directory; preview pagination reads only a page into the browser and masks recognizable contacts. Ready/failed overview cards count all application CVs, not a claim that the entire selected corpus was processed. Opening the tab or starting the server does not invoke a model. Ingest invokes the existing Gemini/Ollama extraction and Gemini embedding pipeline only after clicking **Run extract + embed**. Search/review continue in their existing tabs.
+
+Corpus endpoints: `GET /corpus`, `GET /corpus/{id}/preview`, `POST /corpus/jobs`, `GET /corpus/jobs/{id}`, `POST /corpus/jobs/{id}/stop`, and `GET /corpus/jobs/{id}/report`. Job requests accept allowlisted actions and bounded numeric settings, never shell commands or arbitrary paths. This remains a local demo app with the same authentication scope as the existing upload/search endpoints.
+
 See [docs/DATASET.md](docs/DATASET.md) for the downloaded Djinni source, exact row counts,
 checksums, reproducible sampling, measured local lexical baseline and the resumable Google Gemini run.
 CV lists are paginated and exclude raw CV text from summary queries, so a 100,000-profile

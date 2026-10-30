@@ -612,7 +612,17 @@ Nguồn tham khảo: LangGraph Interrupts — https://docs.langchain.com/oss/pyt
 
 Những cơ chế có thể trình diễn gồm TypedDict, reducer, fan-out, barrier, schema chung, cache/vector và checkpoint/human review. Chất lượng xếp hạng còn phụ thuộc extraction và trọng số chưa hiệu chỉnh bằng bộ nhãn. Hệ thống hỗ trợ HR trong phạm vi thử nghiệm, chưa có auth, OCR hoặc quyết định tuyển dụng tự động. Tests xác nhận logic và các nhánh đã kiểm tra, không đo độ đúng tuyển dụng hoặc LLM.
 
-Ưu tiên tuần 8 là chốt ý nghĩa điểm mềm và diễn giải điều kiện chưa lọc cứng; dẫn output resume với cùng thread_id, giữ pilot 20 CV. Chốt tuần 9 là đóng gói corpus pilot, cấu hình/model, checkpoint mẫu, tests, lab và tự đánh giá/AI/nhật kí. Không tự đặt thêm ngày nộp ngoài mốc tuần 9 đã được phản hồi.
+Ưu tiên tuần 8 đã được thực hiện trong phạm vi xếp hạng ưu tiên có HR duyệt, dựa trên các ca thực nghiệm đã lưu.
+
+Điểm mềm và điều kiện bắt buộc. Đã chốt giữ công thức xếp hạng mềm: min_years ảnh hưởng experience_fit; điểm cao chưa bảo đảm đạt mọi yêu cầu. Chưa áp dụng bộ lọc loại cứng theo kinh nghiệm, nghề hoặc cấp bậc; HR đối chiếu điều kiện từ CV trước khi duyệt. UI/API công bố ranking_mode=soft_priority và hard_filters_applied=false. Quyết định và CV minh họa được trình bày tại 12.1 và 12.4.2.
+
+Checkpoint/resume cùng thread_id. Ca search 13dbc9cc sử dụng search_id làm thread_id xuyên suốt. Trước duyệt, checkpoint pending, next=[human_review], có 0 câu hỏi; sau Command(resume), cùng search chuyển approved, next=[] và lưu 6 câu hỏi, gồm 2 câu mỗi nhóm, errors rỗng. Định danh đầy đủ nằm tại 12.5.3; output before-review.json, after-review.json và các search riêng được đối chiếu ở 12.4.4.
+
+Output kiểm chứng độc lập. Lab dùng cùng thread_id=lab-review-1: lab-start.json ghi output=[]; resume ở process mới cho output=[A,B], next=[] và approved=true; lab-replay.json giữ nguyên [A,B]. Đây là ca kiểm chứng cơ chế LangGraph/SQLite, tách khỏi output model thật. Kết quả tại 13.2 xác nhận resume và replay cùng thread; chưa bao gồm thử chủ động restart web hoặc dừng process giữa lúc review.
+
+Phạm vi pilot. Giữ 20 CV cho từng lượt: pilot A xử lý 19 và tái sử dụng 1; pilot B xử lý 20; nạp lại B bỏ qua đủ 20 hồ sơ đã ready. Snapshot sau B có 40 ready/40 vector tích lũy từ các lượt pilot, không phải toàn bộ corpus đã qua extraction/embedding. Các output và phạm vi được dẫn tại 12.3.3.
+
+Việc xác nhận nhật kí, đóng góp từng thành viên và chốt gói bàn giao tuần 9 được theo dõi riêng tại 13.4–13.5.
 
 ## 13.2 Lab state reducer và checkpoint
 
