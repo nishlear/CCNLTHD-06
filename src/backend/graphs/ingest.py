@@ -174,16 +174,21 @@ def build_process_graph():
     graph = StateGraph(ProcessCVState)
     for node in (parse_pdf, preprocess, extract, validate, cache_extraction, mark_failed):
         graph.add_node(node.__name__, traced(node))
-    graph.add_conditional_edges(START, lambda s: "preprocess" if s.get("raw_text") is not None else "parse_pdf")
-    graph.add_conditional_edges("parse_pdf", lambda s: "mark_failed" if s.get("error") else "preprocess")
+    graph.add_conditional_edges(START, lambda s: "preprocess" if s.get("raw_text") is not None else "parse_pdf",
+                                ["preprocess", "parse_pdf"])
+    graph.add_conditional_edges("parse_pdf", lambda s: "mark_failed" if s.get("error") else "preprocess",
+                                ["mark_failed", "preprocess"])
     graph.add_conditional_edges("preprocess", lambda s: "mark_failed" if s.get("error") else
-                                ("validate" if s.get("cache_hit") else "extract"))
-    graph.add_conditional_edges("extract", lambda s: "mark_failed" if s.get("error") else "validate")
+                                ("validate" if s.get("cache_hit") else "extract"),
+                                ["mark_failed", "validate", "extract"])
+    graph.add_conditional_edges("extract", lambda s: "mark_failed" if s.get("error") else "validate",
+                                ["mark_failed", "validate"])
 
     # One cloud attempt, then one local attempt only on quota/timeout errors.
     # A malformed/incomplete result fails this record rather than spending a
     # second cloud request or cycling back to Gemini after local failover.
-    graph.add_conditional_edges("validate", lambda s: "mark_failed" if s.get("missing_fields") else "cache_extraction")
+    graph.add_conditional_edges("validate", lambda s: "mark_failed" if s.get("missing_fields") else "cache_extraction",
+                                ["mark_failed", "cache_extraction"])
     graph.add_edge("cache_extraction", END)
     graph.add_edge("mark_failed", END)
     return graph.compile()
@@ -266,7 +271,7 @@ def build_ingest_graph():
     graph.add_node("save_and_index", traced(save_and_index_batch))
     graph.add_conditional_edges(START, lambda s: [
         Send("process_cv", {**f, "attempts": 0, "missing_fields": [], "processed": [], "prepared": []})
-        for f in s.get("files", [])] or END)
+        for f in s.get("files", [])] or END, ["process_cv", END])
     # LangGraph's superstep barrier waits for all process_cv branches.
     graph.add_edge("process_cv", "save_and_index")
     graph.add_edge("save_and_index", END)
