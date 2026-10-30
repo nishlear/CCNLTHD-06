@@ -113,7 +113,7 @@ def build_search_graph(checkpointer):
     graph.add_edge("parse_query", "retrieve")
     graph.add_conditional_edges("retrieve", lambda s: [
         Send("score_cv", {"candidate": c, "criteria": s["criteria"]})
-        for c in s["candidates"]] or END)
+        for c in s["candidates"]] or END, ["score_cv", END])
     graph.add_edge("score_cv", "rank")
 
     def route_explanations(state):
@@ -122,11 +122,11 @@ def build_search_graph(checkpointer):
         return [Send("explain", {"result": r, "criteria": state["criteria"]})
                 for r in state["shortlist"] if r["score"] >= config.EXPLAIN_THRESHOLD] or "human_review"
 
-    graph.add_conditional_edges("rank", route_explanations)
+    graph.add_conditional_edges("rank", route_explanations, ["explain", "human_review", END])
     graph.add_edge("explain", "human_review")
     graph.add_conditional_edges("human_review", lambda s: [
         Send("generate_questions", {"cv_id": cv_id, "criteria": s["criteria"]})
-        for cv_id in s["approved_cv_ids"]] or END)
+        for cv_id in s["approved_cv_ids"]] or END, ["generate_questions", END])
     graph.add_edge("generate_questions", END)
     return graph.compile(checkpointer=checkpointer)
 
