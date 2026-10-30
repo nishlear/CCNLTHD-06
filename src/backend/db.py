@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS cv (
     full_name TEXT,
     email TEXT,
     phone TEXT,
+    role TEXT,
     years_experience REAL,
     skills TEXT NOT NULL DEFAULT '[]',
     education TEXT,
@@ -23,10 +24,24 @@ CREATE TABLE IF NOT EXISTS cv (
     error TEXT,
     created_at TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS cv_created ON cv(created_at DESC, id);
+CREATE INDEX IF NOT EXISTS cv_status_created ON cv(status, created_at DESC, id);
+CREATE TABLE IF NOT EXISTS extraction_cache (
+    cv_id TEXT PRIMARY KEY,
+    fingerprint TEXT NOT NULL,
+    extracted TEXT NOT NULL,
+    source TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS api_pacing (
+    name TEXT PRIMARY KEY,
+    next_at REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS search (
     id TEXT PRIMARY KEY,
     query TEXT NOT NULL,
     criteria TEXT,
+    errors TEXT,
     top_k INTEGER NOT NULL,
     status TEXT NOT NULL,
     created_at TEXT NOT NULL
@@ -57,7 +72,7 @@ def now() -> str:
 
 @contextmanager
 def connect():
-    conn = sqlite3.connect(APP_DB_PATH)
+    conn = sqlite3.connect(APP_DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     try:
@@ -70,6 +85,13 @@ def connect():
 def init_db() -> None:
     with connect() as conn:
         conn.executescript(SCHEMA)
+        # Migrate databases created before the role field existed.
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(cv)")}
+        if "role" not in columns:
+            conn.execute("ALTER TABLE cv ADD COLUMN role TEXT")
+        search_columns = {row["name"] for row in conn.execute("PRAGMA table_info(search)")}
+        if "errors" not in search_columns:
+            conn.execute("ALTER TABLE search ADD COLUMN errors TEXT")
 
 
 # ---- CV ----
@@ -85,21 +107,22 @@ def save_cv(cv_id: str, file_name: str, status: str, *, raw_text: str | None = N
     e = extracted or {}
     with connect() as conn:
         conn.execute(
-            """INSERT OR REPLACE INTO cv (id, file_name, raw_text, full_name, email, phone,
+            """INSERT OR REPLACE INTO cv (id, file_name, raw_text, full_name, email, phone, role,
                years_experience, skills, education, summary, status, error, created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (cv_id, file_name, raw_text, e.get("full_name"), e.get("email"), e.get("phone"),
-             e.get("years_experience"), json.dumps(e.get("skills", [])), e.get("education"),
-             e.get("summary"), status, error, now()),
+             e.get("role"), e.get("years_experience"), json.dumps(e.get("skills") or []),
+             e.get("education"), e.get("summary"), status, error, now()),
         )
 
 
-def list_cvs(status: str | None = None) -> list[dict]:
-    sql, args = "SELECT * FROM cv", ()
+def list_cvs(status: str | None = None, *, limit: int = 100, offset: int = 0) -> list[dict]:
+    sql = ("SELECT id, file_name, full_name, skills, years_experience, status, error, created_at FROM cv")
+    args = ()
     if status:
         sql, args = sql + " WHERE status = ?", (status,)
     with connect() as conn:
-        return [cv_row_to_dict(r) for r in conn.execute(sql + " ORDER BY created_at DESC", args)]
+        return [cv_row_to_dict(r) for r in conn.execute(sql + " ORDER BY created_at DESC, id LIMIT ? OFFSET ?", args + (limit, offset))]
 
 
 def get_cv(cv_id: str) -> dict | None:
@@ -110,6 +133,7 @@ def get_cv(cv_id: str) -> dict | None:
 
 def delete_cv(cv_id: str) -> bool:
     with connect() as conn:
+        conn.execute("DELETE FROM extraction_cache WHERE cv_id = ?", (cv_id,))
         return conn.execute("DELETE FROM cv WHERE id = ?", (cv_id,)).rowcount > 0
 
 
@@ -123,13 +147,15 @@ def create_search(search_id: str, query: str, top_k: int) -> None:
         )
 
 
-def update_search(search_id: str, *, status: str, criteria: dict | None = None) -> None:
+def update_search(search_id: str, *, status: str, criteria: dict | None = None, errors: list[dict] | None = None) -> None:
     with connect() as conn:
         if criteria is not None:
             conn.execute("UPDATE search SET status = ?, criteria = ? WHERE id = ?",
                          (status, json.dumps(criteria), search_id))
         else:
             conn.execute("UPDATE search SET status = ? WHERE id = ?", (status, search_id))
+        if errors is not None:
+            conn.execute("UPDATE search SET errors = ? WHERE id = ?", (json.dumps(errors), search_id))
 
 
 def get_search(search_id: str) -> dict | None:
@@ -139,13 +165,14 @@ def get_search(search_id: str) -> dict | None:
         return None
     d = dict(row)
     d["criteria"] = json.loads(d["criteria"]) if d["criteria"] else None
+    d["errors"] = json.loads(d["errors"]) if d.get("errors") is not None else None
     return d
 
 
 def list_searches() -> list[dict]:
     with connect() as conn:
         rows = conn.execute(
-            "SELECT id, query, top_k, status, created_at FROM search ORDER BY created_at DESC")
+            "SELECT id, query, top_k, status, created_at FROM search ORDER BY created_at DESC, id DESC")
         return [dict(r) for r in rows]
 
 
@@ -179,7 +206,16 @@ def get_shortlist(search_id: str) -> list[dict]:
     return out
 
 
-def save_review(search_id: str, approved_ids: list[str], questions: list[dict]) -> None:
+def claim_review(search_id: str) -> bool:
+    """Atomically allow one request to resume this search."""
+    with connect() as conn:
+        return conn.execute(
+            "UPDATE search SET status = 'running' WHERE id = ? AND status = 'awaiting_review'",
+            (search_id,),
+        ).rowcount == 1
+
+
+def save_review(search_id: str, approved_ids: list[str], questions: list[dict], *, errors: list[dict] | None = None) -> None:
     with connect() as conn:
         conn.execute("UPDATE search_result SET approved = (cv_id IN (SELECT value FROM json_each(?)))"
                      " WHERE search_id = ?", (json.dumps(approved_ids), search_id))
@@ -187,11 +223,17 @@ def save_review(search_id: str, approved_ids: list[str], questions: list[dict]) 
             r["cv_id"]: r["id"] for r in conn.execute(
                 "SELECT id, cv_id FROM search_result WHERE search_id = ?", (search_id,))
         }
+        conn.execute(
+            "DELETE FROM interview_question WHERE search_result_id IN "
+            "(SELECT id FROM search_result WHERE search_id = ?)", (search_id,))
         conn.executemany(
             "INSERT INTO interview_question (search_result_id, category, question) VALUES (?,?,?)",
             [(result_ids[q["cv_id"]], q["category"], q["question"])
-             for q in questions if q["cv_id"] in result_ids],
+             for q in questions if q["cv_id"] in result_ids and q["cv_id"] in approved_ids],
         )
+        conn.execute("UPDATE search SET status = 'completed' WHERE id = ?", (search_id,))
+        if errors is not None:
+            conn.execute("UPDATE search SET errors = ? WHERE id = ?", (json.dumps(errors), search_id))
 
 
 def get_questions(search_id: str) -> list[dict]:
@@ -203,3 +245,33 @@ def get_questions(search_id: str) -> list[dict]:
             (search_id,),
         )
         return [dict(r) for r in rows]
+
+
+def save_extraction(cv_id: str, fingerprint: str, extracted: dict, source: str | None) -> None:
+    """Commit each validated extraction before any embedding request starts."""
+    with connect() as conn:
+        conn.execute("INSERT OR REPLACE INTO extraction_cache VALUES (?,?,?,?,?)",
+                     (cv_id, fingerprint, json.dumps(extracted, ensure_ascii=False), source, now()))
+
+
+def get_extraction(cv_id: str, fingerprint: str) -> dict | None:
+    with connect() as conn:
+        row = conn.execute("SELECT extracted, source FROM extraction_cache WHERE cv_id=? AND fingerprint=?",
+                           (cv_id, fingerprint)).fetchone()
+    if not row:
+        return None
+    try:
+        extracted = json.loads(row["extracted"])
+        return {"extracted": extracted, "source": row["source"]} if isinstance(extracted, dict) and extracted else None
+    except (TypeError, ValueError):
+        return None
+
+
+def claim_cloud_slot(name: str, interval: float, current_time: float | None = None) -> float:
+    """Atomic pacing for all callers sharing app.db; no transaction while sleeping.
+
+    Waiters re-check on wakeup rather than reserving slots (which can cause a
+    burst after a delayed wakeup). Also usable before application init_db().
+    """
+    from .cloud_pacing import claim_slot
+    return claim_slot(APP_DB_PATH, name, interval, current_time)
