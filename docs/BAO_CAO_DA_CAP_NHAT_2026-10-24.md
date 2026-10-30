@@ -48,7 +48,19 @@ Phần 3 Ứng dụng JD Matching
 
 Chương 11 Kiến trúc và hợp đồng dữ liệu hiện hành
 
-Chương 12 Thực nghiệm model thật và đối chiếu minh chứng
+Chương 12 Triển khai tích hợp và minh chứng kết quả
+
+12.1 Hiện thực hóa hệ thống và kiến trúc thực thi
+
+12.2 Môi trường, nguồn dữ liệu và tiền xử lý thông tin liên hệ
+
+12.3 Kết quả thực nghiệm tổng hợp
+
+12.4 Phân tích cơ chế điều phối và nghiên cứu tình huống
+
+12.5 Giới hạn kết luận, sự cố lịch sử và khả năng tái lập
+
+Phần IV Tự đánh giá và bàn giao
 
 Tài liệu tham khảo
 
@@ -319,209 +331,280 @@ Các giới hạn upload là 20 file/lần, 10 MB/file, 100 trang PDF, 24.000 k�
 | Cache và checkpoint | db.py, graphs/search.py | Dữ liệu đọc lại được từ process độc lập |
 | Chống quota | cloud\_pacing.py, config.py, services.py | Cấu hình và code; pilot khoảng 99 giây phù hợp pacing, chưa có timestamp toàn bộ request để đo RPM thực tế |
 
-# **Chương 12 Thực nghiệm model thật và đối chiếu minh chứng**
+# Chương 12 Triển khai tích hợp và minh chứng kết quả
 
-## **12.1 Phạm vi và nguồn bằng chứng**
+## 12.1 Hiện thực hóa hệ thống và kiến trúc thực thi
 
-Thực nghiệm ngày 24/10/2026 dùng dữ liệu hồ sơ thật đã ẩn danh từ Djinni và Gemini trong ứng dụng đang chạy. Minh chứng gồm log pilot, phản hồi MODEL\_OK, SQLite nghiệp vụ, Chroma, lịch sử checkpoint, ba ảnh người dùng cung cấp và lượt Top 1 chạy lại trực tiếp trên giao diện.
+Hệ thống JD Matching được hiện thực bằng FastAPI, LangGraph, SQLite và ChromaDB. Graph nạp CV thực hiện tiền xử lý, trích xuất, kiểm tra hợp đồng dữ liệu, lưu cache và lập chỉ mục; graph tìm kiếm phân tích yêu cầu, truy hồi, chấm điểm, giải thích, chờ HR duyệt rồi sinh câu hỏi phỏng vấn. Luồng điều khiển được xác định bởi node, conditional edge và Send; bind_tools/ToolNode chỉ xuất hiện trong phần lab tham khảo.
 
-Corpus 100.000 hồ sơ, pilot 20 hồ sơ, lượt duyệt 10 người và lượt duyệt 1 người là các đơn vị khác nhau. Không cộng gộp chúng thành số CV đã chạy qua model hoặc dùng kết quả tìm kiếm từ khóa trên corpus để đại diện cho chất lượng vector.
+Cấu hình sinh văn bản dùng gemini-3.5-flash-lite làm nguồn chính và qwen2.5:3b qua Ollama làm nguồn dự phòng. Tại extract, một lần gọi cloud được chuyển sang Qwen khi gặp 429, timeout hoặc 503; hai nguồn dùng chung prompt và JSON Schema. Vector được tạo bằng gemini-embedding-2 ở 768 chiều. SharedPacingLimiter dùng SQLite để điều tiết cloud ở mức 12 RPM, còn concurrency=4 giới hạn số nhánh ingest đang hoạt động.
 
-## **12.2 Dữ liệu chuẩn bị và chỉ mục thực tế**
+Ingest gồm hai pha: các nhánh process_cv trích xuất và commit extraction_cache; barrier chờ đủ nhánh trước khi save_and_index xử lý danh sách prepared để embed/upsert. Bản ghi được cập nhật ready sau khi lưu và lập chỉ mục thành công. Khi chạy lại, importer tái sử dụng CV đã ready và còn vector tương ứng.
 
-| Đại lượng | Kết quả đã ghi nhận |
-| ----- | ----- |
-| Nguồn | lang-uk/recruitment-dataset-candidate-profiles-english |
-| Dòng Parquet nguồn | 210.250 |
-| Hồ sơ hợp lệ duy nhất | 209.638; loại 612 do độ dài |
-| Mẫu JSONL | 100.000 hồ sơ, reservoir sampling, seed 20261023 |
-| SHA-256 mẫu | e446c3fa164a3003f453f28ad6130fbda79cd2f31f8b86620edabcf338984f8d |
-| Chroma đã kiểm tra | 20 vector thuộc 20 hồ sơ được chọn |
-| Số chiều và định dạng | 768, compact-v2; norm xấp xỉ 1 |
+**Bảng 12.1 – Ma trận phủ kỹ thuật**
 
-Dữ liệu là văn bản CV, không phải 100.000 PDF. Source revision đã ghi nhận là f4d04f624126e27a17770d06953dce7e914ce214. Tên Anonymous candidate là định danh hiển thị. Hồ sơ có thể đã cũ; không suy ra số năm hiện tại bằng cách lấy ngày hôm nay trừ một mốc Present trong CV.
+| Yêu cầu | Node / state | Cơ chế thực thi | Minh chứng |
+| --- | --- | --- | --- |
+| Tiền xử lý và schema | preprocess, extract, validate; clean_text, extracted | Cache hợp lệ đi validate; chưa có cache đi extract; lỗi dữ liệu đi mark_failed. | test_workflows.py; test_gemini_services.py |
+| Reducer | prepared, processed; results, explanations, questions, errors | operator.add nối các phần cập nhật danh sách từ nhánh song song; rank sắp xếp kết quả. | test_ingest_two_phase.py; lab state_checkpoint |
+| Barrier hai pha | process_cv → save_and_index; prepared | Superstep chờ toàn bộ nhánh trích xuất/cache trước pha embed/upsert. | pilot.log; test_ingest_two_phase.py |
+| Pacing và fallback | extract; SharedPacingLimiter | SQLite điều tiết cloud; test provider boundary kiểm tra chuyển Qwen khi 429/timeout/503. | test_gemini_services.py; test_ingest_two_phase.py |
+| Human review | human_review; approved_cv_ids | interrupt lưu điểm dừng; Command(resume) tiếp tục cùng thread_id. | before-review.json; after-review.json; test_workflows.py |
+| Chịu gọi lặp | claim_review, resume_search, save_review | Claim nguyên tử; khôi phục cùng quyết định; transaction thay tập câu hỏi của search. | test_database.py; test_workflows.py |
+| Phân loại kết quả | outcome_fields; errors, incomplete_cv_ids | UI, API và lịch sử dùng cùng tiêu chí đầu ra hoàn chỉnh. | test_outcomes.py; frontend.test.cjs |
 
-Bộ lọc contacts-v2 che thông tin liên hệ trước extraction. Pilot ghi 1 hồ sơ có thay thế 1 URL. Thống kê cũ trên toàn bộ corpus dùng bộ lọc khác được giữ trong file benchmark để đối chiếu, không trộn với số đo pilot này.
+Ma trận liên hệ cơ chế trong mã nguồn với test hoặc output có thể kiểm tra trực tiếp.
 
-Ở snapshot buổi sáng, app.db có 20 hàng ready và 60 hàng failed lịch sử. Đây không phải kết quả 60 lỗi của pilot mới; trong nhóm 20 được chọn, tất cả đều ready và có vector. Báo cáo không xóa dữ liệu nguồn hoặc lịch sử lỗi để làm đẹp tỷ lệ thành công.
+Sản phẩm giữ ý nghĩa xếp hạng ưu tiên có HR duyệt: ranking_mode=soft_priority, hard_filters_applied=false. API phân biệt status của workflow với outcome của đầu ra, nhờ đó một graph kết thúc vẫn được báo rõ nếu sinh câu hỏi thiếu hoặc gặp lỗi.
 
-## **12.3 Phản hồi Gemini và pilot 20 hồ sơ**
+**Bảng 12.2 – Quy tắc ánh xạ status và outcome**
 
-| Minh chứng | Giá trị |
-| ----- | ----- |
-| MODEL\_OK | succeeded, gemini-3.5-flash-lite, STOP |
-| Thời điểm phép thử | 08:13:19 ngày 24/10/2026, Asia/Saigon |
-| Response ID | LwbcapPuNO\_n4-EP9b6hyAQ |
-| Token phép thử | 7 input, 3 output, 44 thinking; tổng 54 |
-| Độ trễ phép thử | 1.853,097 ms |
-| Pilot | completed; 19 xử lý, 19 ready, 0 failed; 1 already\_ready |
-| Nguồn extraction mới | Gemini cho cả 19 hồ sơ |
-| Local fallback | Warmup thành công; không có hồ sơ pilot chuyển sang Qwen |
-| Thời gian pilot và truy vấn mẫu | 99,424 giây; riêng báo cáo giữa chừng 95,970 giây |
+| status | outcome | Tiêu chí |
+| --- | --- | --- |
+| running / awaiting_review | pending | Đang xử lý hoặc chờ HR quyết định. |
+| completed | succeeded | Không có errors; mỗi CV được duyệt có đúng 2 câu technical, 2 experience và 2 behavioral. Không chọn CV thì không yêu cầu câu hỏi. |
+| completed | completed_with_errors | Graph đã kết thúc nhưng có errors hoặc số câu hỏi theo loại chưa đầy đủ. |
+| failed | failed | Workflow bị dừng do lỗi không thể tiếp tục, chẳng hạn retrieval. |
 
-54 token và 1,853 giây chỉ thuộc request MODEL\_OK, không phải tổng chi phí hoặc latency xử lý 19 CV. Chưa có tổng usage và hóa đơn provider cho toàn bộ pilot. Số 19 là số hồ sơ được xử lý trong lượt này, không chứng minh đó là lần đầu các hồ sơ xuất hiện trong database.
+API trả thêm errors, approved_count, question_count, expected_question_count và incomplete_cv_ids để giao diện và thống kê diễn giải thống nhất.
 
-## **12.4 Lượt tìm kiếm và duyệt trong ảnh người dùng**
+## 12.2 Môi trường, nguồn dữ liệu và tiền xử lý thông tin liên hệ
 
-Search ID: a91025e0f20f489db58dda8d4a739efe. Truy vấn dev 3 năm được phân tích thành skills rỗng, min\_years=3, level=null và keywords chứa dev. Top 10 có điểm chính xác từ 0,747582 đến 0,958391; giao diện làm tròn còn hai chữ số thập phân.
+Nguồn thực nghiệm là tập Djinni tiếng Anh gồm 210.250 dòng. Bước chuẩn bị loại hồ sơ thiếu dữ liệu, ngoài khoảng độ dài hoặc trùng theo ID/nội dung chuẩn hóa, rồi lấy mẫu Reservoir Sampling 100.000 hồ sơ từ 209.638 bản ghi đủ điều kiện; 612 dòng không đạt độ dài. Mỗi hồ sơ có ID nguồn và tên hiển thị Anonymous candidate để truy vết bằng định danh nghiên cứu.
 
-Checkpoint lịch sử ghi awaiting\_review trước quyết định, approval\_status=pending, next=\[human\_review\] và 0 câu hỏi. Cả 10 ô được chọn khi người dùng gửi duyệt. Bản ghi cuối cùng completed, approved cho 10 CV và có 60 câu hỏi: 20 technical, 20 experience, 20 behavioral. Mỗi CV có 6 câu, gồm 2 câu mỗi nhóm. Checkpoint cuối có next rỗng và errors rỗng.
+**Bảng 12.3 – Môi trường và cấu hình thực nghiệm**
 
-Ba ảnh Screenshot 2026-10-24 082917.png, 082952.png và 083011.png thể hiện shortlist và các nhóm câu hỏi tương ứng. Trạng thái awaiting\_review còn hiện trong ảnh đầu cùng nút Đang tạo câu hỏi là trạng thái giao diện trong khi đợi HTTP review trả về; dữ liệu cuối cùng trong SQLite và checkpoint đã completed.
+| Hạng mục | Giá trị |
+| --- | --- |
+| Máy đo | Windows 10; Intel64 Family 6 Model 183; 28 CPU logic; RAM 15,84 GiB |
+| Runtime và lưu trữ | Python 3.11.9; SQLite 3.45.1; uv.lock |
+| Thư viện khóa | langgraph 1.2.16; chromadb 1.5.9; google-genai 2.33.0; langchain-google-genai 4.4.2 |
+| Corpus nguồn / mẫu | 210.250 dòng / 100.000 CV; reservoir seed 20261023 |
+| Văn bản trong mẫu | 100–7.406 ký tự/CV; trung vị 786 ký tự; tổng 98.021.342 ký tự |
+| Tệp nguồn / JSONL | Parquet 237.415.736 byte; JSONL 153.764.041 byte; chuẩn bị mẫu 8,220 giây |
+| Pilot cloud | 20 CV mỗi lượt; tách xử lý trong lượt với already_ready |
+| Cloud / local chat | gemini-3.5-flash-lite / qwen2.5:3b; temperature=0 |
+| Embedding và collection | gemini-embedding-2; 768 chiều; cv_gemini_embedding_2_768_v1 |
+| Điều tiết và bộ nhớ local | 12 RPM; concurrency=4; keep_alive=30m; num_ctx=4096 |
+| Hợp đồng dữ liệu | JSON với skills, exp_yrs, role, summary; nội dung embed compact-v2 dưới 300 từ |
 
-| Ứng viên trong shortlist | Kinh nghiệm lưu trữ | Điểm | approved |
-| ----- | ----- | ----- | ----- |
-| 62c4d272 | 3.0 | 0.958391 | Có |
-| 700fef76 | 3.0 | 0.956896 | Có |
-| 163fb9a3 | 18.0 | 0.950663 | Có |
-| 3f56345b | 5.0 | 0.950326 | Có |
-| 9f8cbaf0 | 3.0 | 0.948591 | Có |
-| 4852f248 | 12.0 | 0.947847 | Có |
-| 33d0892e | 10.0 | 0.943763 | Có |
-| af8a1764 | 3.0 | 0.943605 | Có |
-| 2bc3301a | 2.0 | 0.879044 | Có |
-| dabeaff8 | Chưa rõ | 0.747582 | Có |
+Hai quy mô được dùng cho hai phép đo: corpus 100.000 CV cho baseline từ khóa cục bộ và pilot 20 CV cho pipeline có model.
 
-## **12.5 Lượt chạy lại trực tiếp Top 1**
+Tiền xử lý dùng regex/hàm chuỗi để che email, URL, liên kết hồ sơ và số điện thoại, sau đó chuẩn hóa khoảng trắng trước extract. Văn bản đưa vào embedding được ghép từ các trường đã trích xuất theo mẫu role | Skills: skills | Experience: exp_yrs years | summary. JSONL nguồn được giữ để đối chiếu; nội dung đã lọc đi vào chỉ mục hoặc biên gọi model.
 
-Truy vấn mới bổ sung kỹ năng rõ ràng: Software engineer có ít nhất 3 năm kinh nghiệm thương mại, biết Akka, Netty và Kafka Streams. Top được đặt bằng 1\. Đây là một lượt tìm mới, không sửa kết quả dev 3 năm đã lưu.
+Benchmark FTS5 đã lưu dùng bộ lọc contacts-v1. Pipeline hiện hành dùng contacts-v2 trong text_cleaning.py, được gọi từ importer và preprocess. Bảng 12.4 giữ nguyên kết quả của phiên bản đã đo.
 
-Search ID: c3adbe3a46d348a1be2e0577737d9b4f. Kết quả là Anonymous candidate 3f56345b, Software Engineer, years\_experience=5, score=0.974037; giao diện hiển thị 0,97. CV nguồn ghi rõ 5+ years of commercial experience, nên có căn cứ đáp ứng điều kiện từ 3 năm kinh nghiệm làm việc. Các kỹ năng khớp là Akka, Netty và Kafka Streams.
+**Bảng 12.4 – Kết quả bộ lọc contacts-v1 trên 100.000 CV**
 
-Trước khi nhấn Gửi duyệt & tạo câu hỏi, checkpoint có next=\[human\_review\], approval\_status=pending và 0 câu hỏi. Sau thao tác trên giao diện, chỉ một CV được approved. Kết quả completed, 6 câu hỏi được lưu, mỗi nhóm technical, experience, behavioral có 2 câu; errors rỗng và next rỗng.
+| Chỉ số | Kết quả |
+| --- | --- |
+| Hồ sơ có ít nhất một thay thế | 1.277 |
+| URL được thay thế | 2.811 |
+| Liên kết hồ sơ | 16 |
+| Số điện thoại | 8 |
+| Định danh messenger | 6 |
+| Thời gian lọc | 17,916 giây |
 
-Ví dụ câu hỏi kỹ thuật trong kết quả mới đề cập cách dùng Akka xử lý dữ liệu bất đồng bộ trong backend IoT và tình huống ưu tiên Netty. Câu hỏi kinh nghiệm đề cập Kafka Streams và CI/CD. Một số đầu ra tiếng Việt chưa có đầy đủ dấu; đây là điểm chất lượng sinh văn bản cần cải thiện, không phải lỗi mất trạng thái.
+Số thay thế đếm theo lần xuất hiện, nên một hồ sơ có thể đóng góp nhiều mục liên hệ.
 
-Ảnh top1-awaiting-review.jpg và top1-completed.jpg ghi lại hai thời điểm. Các ảnh cùng dữ liệu SQLite/checkpoint giúp phân biệt trạng thái chờ duyệt và đầu ra đã sinh thành công.
+## 12.3 Kết quả thực nghiệm tổng hợp
 
-## **12.6 Những giới hạn bộc lộ trong output**
+### 12.3.1 Kiểm thử tự động
 
-Thứ nhất, min\_years chưa phải bộ lọc cứng. CV 2bc3301a có 2 năm vẫn ở hạng 9 với 0,879044; CV dabeaff8 chưa rõ số năm vẫn ở hạng 10 với 0,747582. Khi skills rỗng, skill\_fit=1 đóng góp sẵn 0,5 điểm. Điểm cao do đó không đồng nghĩa đáp ứng mọi điều kiện tuyển dụng.
+Bộ kiểm thử kiểm tra định tuyến graph, hợp đồng JSON, bảo vệ dữ liệu, hai pha ingest, checkpoint/human review, persistence và cách UI/API diễn giải kết quả. Các lỗi 429, timeout và 503 được tạo tại biên provider để kiểm tra nhánh xử lý; kết quả gọi model thật được báo cáo riêng ở 12.3.3.
 
-Thứ hai, dữ liệu kinh nghiệm chưa phân biệt mức độ chắc chắn. CV 62c4d272 ghi almost 3 years nhưng được lưu thành 3,0; không đủ căn cứ kết luận ít nhất 3 năm. CV 700fef76 nói đã học lập trình hơn 3 năm; con số này chưa chứng minh 3 năm kinh nghiệm làm việc thương mại. Lời giải thích và câu hỏi có thể kế thừa sai lệch của extraction.
+**Bảng 12.5 – Kết quả kiểm thử mã nguồn**
 
-Thứ ba, từ khóa dev quá rộng, skills rỗng và level chưa được dùng như điều kiện lọc bắt buộc. Shortlist có nghệ sĩ, quản lý và hỗ trợ khách hàng. Đây là đầu ra truy hồi/xếp hạng hiện tại, không phải bằng chứng hệ thống đã nhận diện đúng nghề developer cho mọi kết quả.
+| Bộ kiểm thử | Kết quả | Thời gian |
+| --- | --- | --- |
+| Python pytest | 119 passed; 15 subtests passed | 20,45 giây |
+| Frontend Node test | 5 passed; 0 failed | 107,064 ms |
 
-Thứ tư, giao diện tự chọn sẵn các CV có score từ 0,5. Trong lượt dev 3 năm, cả 10 người được chọn dù có người thiếu hoặc không đạt kinh nghiệm. Việc bấm duyệt vẫn là hành động của HR nhưng cần hỗ trợ người dùng tốt hơn bằng cách hiển thị lý do không đạt và không mặc định xem điểm là đủ điều kiện.
+Đây là kết quả của bộ mã nguồn bàn giao; các mốc test cũ được giữ trong artifact lịch sử.
 
-Các hướng cần bổ sung là tách điều kiện bắt buộc khỏi điểm mềm, lưu bằng chứng và độ chắc chắn cho số năm, phân biệt học tập với làm việc, kiểm tra nghề/vai trò, và đánh giá bằng bộ CV–JD có nhãn. Những thay đổi này chưa được ghi là đã hoàn thành trong bản cập nhật báo cáo.
+### 12.3.2 Baseline tìm kiếm từ khóa trên 100.000 CV
 
-## **12.7 Minh chứng và cách tái lập**
+Baseline lập chỉ mục văn bản đã lọc liên hệ bằng SQLite FTS5 và xếp hạng BM25. Thời gian tạo chỉ mục là 26,305 giây, gồm bước lọc 17,916 giây; tệp SQLite chiếm 189.288.448 byte. Mỗi truy vấn chạy 50 lần với cache ấm.
 
-| Nguồn | Nội dung đối chiếu |
-| ----- | ----- |
-| gemini-model-check.json | Model, response ID, token và thời gian của MODEL\_OK |
-| gemini-dataset-run.json | Pilot 19 xử lý \+ 1 tái sử dụng; model và cấu hình hai pha |
-| report-audit-20261024.json | Hash code, snapshot nghiệp vụ, lịch sử checkpoint, câu hỏi và thống kê vector |
-| app.db và checkpoints.db | Các search ID, approved\_cv\_ids, errors và số câu hỏi |
-| Chroma | 20 vector 768 chiều, định dạng compact-v2 |
-| Ba ảnh người dùng | Lượt dev 3 năm, 10 CV và các nhóm câu hỏi |
-| Hai ảnh Top 1 mới | Điểm dừng trước duyệt và kết quả 1 CV/6 câu hỏi |
+**Bảng 12.6 – Độ trễ truy vấn SQLite FTS5 BM25**
 
-Các JSON và ảnh audit nằm trong data/benchmarks và data/benchmarks/proof/report-audit-20261024. Hash SHA-256 của các file code liên quan được lưu trong JSON audit; không dùng HEAD cũ để đại diện cho mọi thay đổi chưa commit.
+| Truy vấn AND | Số khớp | p50 (ms) | p95 (ms) |
+| --- | --- | --- | --- |
+| python + fastapi | 494 | 0,940 | 2,486 |
+| java + spring | 4.035 | 3,411 | 4,314 |
+| react + typescript | 4.380 | 3,748 | 5,091 |
+| docker + kubernetes | 1.665 | 2,227 | 4,133 |
+| sql + data | 4.363 | 6,534 | 8,062 |
 
-Có thể mở lịch sử theo \#search=a91025e0f20f489db58dda8d4a739efe hoặc \#search=c3adbe3a46d348a1be2e0577737d9b4f trên cùng web server. Mở lại lượt đã completed không cần chạy lại extraction hoặc sinh câu hỏi. Muốn thực nghiệm lượt mới cần tạo search ID mới và ghi riêng thời gian, số người duyệt và output.
+Độ trễ trung vị nằm trong khoảng 0,940–6,534 ms; phép đo này sử dụng truy vấn từ khóa cục bộ, với 0 request model và 0 request embedding.
 
-## **12.8 Kiểm thử mã nguồn và kết luận thực nghiệm**
+### 12.3.3 Pipeline Gemini trên pilot 20 CV
 
-Terminal người dùng đã chạy toàn bộ suite với 107 passed và 12 subtests passed trong 7,46 giây. Đây là kết quả kiểm tra logic, dữ liệu, graph và API; không dùng số test làm độ chính xác của Gemini. Những ca kiểm thử thay thế lời gọi provider chỉ phục vụ kiểm tra lỗi/nhánh, không được đưa vào bảng output model thật.
+Phép kiểm tra SDK xác nhận đường gọi inference hoạt động. Các pilot sau đó ghi riêng số CV xử lý trong lượt, số ready được tái sử dụng và thời gian runner. Pilot A/B đều ghi nguồn extract là Gemini; kết quả review được đối chiếu theo từng search.
 
-Hai lượt giao diện mới xác nhận được chuỗi parse, retrieval, rank, explain, interrupt, duyệt và sinh câu hỏi với dữ liệu lưu nhất quán. Pilot xác nhận extraction/index trên nhóm 20 hồ sơ, gồm 19 xử lý và 1 tái sử dụng. Chưa có đánh giá Precision@k, Recall@k, nDCG, độ chính xác kinh nghiệm, tải đồng thời thực tế hoặc tổng chi phí provider. Không khẳng định hệ thống đạt chất lượng tuyển dụng chỉ từ một demo hoàn tất.
+**Bảng 12.7 – Tổng hợp các lượt chạy Gemini**
 
+| Phép thử | CV xử lý / tái sử dụng | Thời gian | Kết quả và liên hệ review |
+| --- | --- | --- | --- |
+| SDK MODEL_OK | 0 CV; 1 request | 1.915,83 ms | succeeded, STOP; output MODEL_OK; 7 input, 3 output nhìn thấy, 55 thinking, 65 token tổng. |
+| pilot-0-20 | 5 / 15 | 7,658 s | 5 ready, 0 failed; search edd6a99b dừng awaiting_review, Top 10. |
+| pilot-A-20 | 19 / 1 | 99,424 s | 19 ready, 0 failed; runner tạo search 154131c9. Search riêng a91025e0 có Top-10/60 câu hỏi. |
+| pilot-B-20 | 20 / 0 | 121,124 s | 20 ready, 0 failed; runner chỉ ingest. Search sau đó 13dbc9cc có Top-1/6 câu hỏi. |
+| pilot-B-resume | 0 / 20 | 0,609 s | Bỏ qua cả 20 CV đã ready và có vector tương ứng. |
 
-## **12.9 Kiểm chứng chạy thật bổ sung buổi tối 24/10/2026**
+Thời gian của runner và của review là hai pha đo riêng; 60/6 câu hỏi được ghi theo search, không cộng vào thời gian ingest trong bảng. MODEL_OK là request độc lập, không đại diện usage của pilot.
 
-Đợt mới chạy toàn bộ suite: **115 passed, 15 subtests passed trong 13,53 giây**; thêm **4 test frontend passed**. Đã bổ sung dependency SOCKS cho SDK và đồng bộ môi trường theo uv.lock trước bộ kiểm thử cuối.
+Kiểm tra lưu trữ sau pilot B ghi nhận 40 vector compact-v2 trong collection, đều 768 chiều, hữu hạn và có chuẩn xấp xỉ 1; toàn bộ CV ready được đối chiếu đều có vector.
 
-Pilot mới chọn 20 CV chưa có trong database: **20 xử lý, 20 ready, 0 failed, 0 already_ready**, thời gian **121,124 giây**. Cả 20 extraction dùng Gemini; log ghi một batch embedding HTTP 200 sau khi toàn bộ cache được lưu. Nạp lại cùng tập: **20 already_ready**, 0 xử lý mới, 0,609 giây. Chroma sau lượt này có **40 vector 768 chiều**, toàn bộ compact-v2, hữu hạn và norm xấp xỉ 1; 60 hàng failed lịch sử vẫn được giữ.
+## 12.4 Phân tích cơ chế điều phối và nghiên cứu tình huống
 
-Search ID mới **13dbc9cc7fad4f29a96bdf686fd3d9e5** tìm Top 1 với tối thiểu 3 năm và Akka/Netty/Kafka Streams. Ứng viên **3f56345b** có bằng chứng nguồn “5+ years of commercial experience”, điểm **0,977572**. Trước duyệt: pending/human_review, 0 câu hỏi. Sau duyệt một người: completed, **6 câu hỏi**, mỗi nhóm có 2, next và errors đều rỗng. Đây là lượt API mới, không phải lượt trong ảnh buổi sáng.
+### 12.4.1 Đồng thời, pacing và barrier hai pha
 
-Qwen thật cũng đã extract riêng một CV từ tập pilot, JSON qua schema, num_ctx=4096 và keep_alive=30m. Đây là kiểm tra local trực tiếp, không phải failover phát sinh tự nhiên; pilot không gặp 429. Chưa có ảnh UI mới do Edge không khởi chạy và tải Chromium bị allowlist chặn. Không dùng ảnh cũ hay phản hồi model giả để đại diện cho lượt mới.
+Mục tiêu phân tích là xác định thời điểm pha embedding bắt đầu so với các nhánh trích xuất. Concurrency=4 cho phép nhiều nhánh hoạt động, trong khi SharedPacingLimiter điều tiết lượt gọi cloud theo nhịp khoảng 5 giây.
 
-Chi tiết và chỉ mục bằng chứng: [Kiểm chứng chạy thật 24/10/2026](KIEM_CHUNG_CHAY_THAT_2026-10-24.md). Dữ liệu mới nằm trong `data/benchmarks/proof/live-validation-20261024/`, kèm summary JSON và manifest SHA-256. Số liệu ở các mục 12.1–12.8 giữ ngữ cảnh snapshot buổi sáng.
+**Bảng 12.8 – Timeline thực thi pilot-B-20**
 
-## 12.10 Đối chiếu cơ chế và tiêu chí bàn giao
+| Mốc tương đối | Sự kiện trong log | Ý nghĩa |
+| --- | --- | --- |
+| t+0,000 s | SDK bắt đầu xử lý chat đầu | Mốc quy chiếu của pilot-B-20. |
+| t+5,022 s; t+10,003 s | Hai lượt chat kế tiếp | Các nhánh đồng thời vẫn đi qua pacer. |
+| t+13,957 s | Một nhánh commit extraction_cache | Kết quả pha 1 được lưu khi các nhánh khác còn chạy. |
+| t+108,953 s | Nhánh cuối commit cache | Hoàn tất 20 cache writes. |
+| t+109,164 s | phase=embed_upsert; batch_size=20 | Pha 2 bắt đầu sau toàn bộ cache. |
+| t+118,628 s | batchEmbedContents HTTP 200 | Nhận response embedding theo batch. |
 
-### 12.10.1 Quyết định về phạm vi và điểm số
+Timeline cho thấy barrier giữ đúng thứ tự extract/cache → embed/upsert. Reducer operator.add ghép các cập nhật prepared/processed và results/explanations/questions/errors; barrier chờ nhánh, còn rank sắp xếp theo score và CV ID. Ba cơ chế đảm nhiệm ba chức năng khác nhau.
 
-Phiên bản bàn giao giữ ý nghĩa xếp hạng ưu tiên có HR duyệt. Công thức 0,5 × skill_fit + 0,3 × similarity + 0,2 × experience_fit không đổi; chưa thêm hard filter theo kinh nghiệm, nghề hoặc cấp bậc. CV dưới yêu cầu vẫn được xếp hạng là giới hạn sản phẩm đã công bố, không phải sai khác giữa code và thiết kế. UI đã cảnh báo điểm cao chưa bảo đảm đạt mọi yêu cầu; API công bố ranking_mode=soft_priority, hard_filters_applied=false.
+### 12.4.2 Minh chứng tính điểm và giải thích
 
-MIN_SIMILARITY=0,55 áp dụng tại retrieve trên similarity vector. EXPLAIN_THRESHOLD=0,5 áp dụng trên score tổng trước explain; UI cũng chọn sẵn từ score 0,5. Hai đại lượng khác nhau nên không cần ép hai ngưỡng bằng nhau. HR phải kiểm tra điều kiện nguồn trước khi duyệt.
+Case study dùng cv-2bc3301a trong search a91025e0 với truy vấn “dev 3 năm”. Hồ sơ có similarity=0,8190341294, vượt MIN_SIMILARITY=0,55 tại retrieval. Query có skills rỗng nên skill_fit=1; dữ liệu đã extract lưu 2 năm và min_years=3.
 
-### 12.10.2 Liên hệ yêu cầu với state node edge và bằng chứng
+**Phân rã điểm của cv-2bc3301a**
 
-| Yêu cầu | Node và state | Điều phối thực tế | Minh chứng |
-|---|---|---|---|
-| Schema và tiền xử lý | preprocess/extract/validate; clean_text/extracted/source | Cache hợp lệ đi validate; chưa có cache đi extract; thiếu trường đi mark_failed | test_workflows.py; test_gemini_services.py |
-| Reducer | IngestState.prepared/processed; SearchState.results/explanations/questions/errors | operator.add nối cập nhật danh sách từ các nhánh; không tự xếp hạng hay loại trùng | test_ingest_two_phase.py; lab collected=[A,B] |
-| Barrier hai pha | process_cv → save_and_index; prepared | Superstep chờ đủ nhánh process_cv rồi mới embed/upsert | 20 cache writes trước embed; pilot.log; test_ingest_two_phase.py |
-| Fallback và pacing | extract, SharedPacingLimiter; source/api_pacing | Một cloud attempt; 429/timeout/503 sang Qwen; schema lỗi failed; SQLite điều tiết 12 RPM | test_gemini_services.py; test_ingest_two_phase.py; ollama-ps.txt |
-| Human review | human_review; approval_status/approved_cv_ids/questions | interrupt; search_id=thread_id; Command(resume) cùng thread | before-review.json; after-review.json; test_workflows.py |
-| Chịu gọi lặp | claim_review/resume_search/save_review | Claim nguyên tử; quyết định khớp checkpoint; thay câu hỏi trong transaction, không append bản sao | test_workflows.py; test_database.py |
-| Trạng thái kết thúc | outcome_fields; errors/question_count/incomplete_cv_ids | Phân biệt kết thúc graph với đầu ra dùng được trong UI/API/lịch sử | test_outcomes.py; frontend-tests.log |
+| Thành phần | Phép tính | Đóng góp |
+| --- | --- | --- |
+| Kỹ năng | 0,5 × 1 | 0,500000 |
+| Tương đồng vector | 0,3 × 0,8190341294 | 0,245710 |
+| Kinh nghiệm | 0,2 × (2/3) | 0,133333 |
+| Tổng | Làm tròn sau khi cộng | 0,879044; hạng 9 |
 
-Bảng phủ xác nhận cơ chế có code và output để giải thích, không phải đánh giá như lab cũ hoặc chứng minh model tự lập kế hoạch. Môi trường dùng Python 3.11, uv.lock và cấu hình model cố định. Không bổ sung bind_tools/ToolNode trước hạn.
+Score 0,879044 vượt EXPLAIN_THRESHOLD=0,50 nên hồ sơ đi qua explain và được UI chọn sẵn. MIN_SIMILARITY áp dụng cho tương đồng vector, còn EXPLAIN_THRESHOLD áp dụng cho điểm tổng; vì vậy hai ngưỡng phục vụ hai bước khác nhau.
 
-### 12.10.3 Phân biệt corpus pilot và lịch sử lỗi
+Ví dụ thể hiện đúng thiết kế điểm mềm: dù giá trị kinh nghiệm đang lưu thấp hơn yêu cầu, ứng viên vẫn nằm trong shortlist để HR xem xét.
 
-| Nhãn run đối chiếu | Requested | Processed / ready / failed / already_ready | Artifact |
-|---|---:|---|---|
-| pilot-A-20 | 20 | 19 / 19 / 0 / 1 | gemini-dataset-run.json; 99,424 giây |
-| pilot-B-20 | 20 | 20 / 20 / 0 / 0 | pilot-run.json; 121,124 giây |
-| pilot-B-resume | 20 | 0 / 0 / 0 / 20 | resume-run.json; 0,609 giây |
-| legacy-unattributed | 60 hàng failed lịch sử | Không cộng vào mẫu số A hoặc B | evidence-review.json |
+### 12.4.3 Lỗi trích xuất LLM và độ nhạy thứ hạng
 
-Đây là nhãn audit bổ sung để liên hệ artifact, không giả nhận là run_id được runner gốc ghi. Một already_ready của A là tái sử dụng hàng ready có vector, chưa đủ để gọi là extraction-cache hit. Số 19 là số xử lý trong lượt, không chứng minh đó là lần đầu các CV xuất hiện.
+Mục tiêu là xác định thông tin nguồn nào có thể làm sai thành phần kinh nghiệm. Hai hồ sơ đứng đầu cùng được Gemini trích xuất 3,0 năm, nhưng câu nguồn cần cách diễn giải thận trọng hơn.
 
-Kho đã chuẩn bị có 100.000 hồ sơ; từng pilot chỉ xét 20. Sau hai lượt, chỉ mục được kiểm tra có 40 vector. Không suy ra đã index toàn kho, không ingest thêm corpus trong đợt hoàn thiện này. Gói bàn giao chỉ chứa tập pilot 20 CV.
+**Bảng 12.9 – Văn bản nguồn và độ nhạy thứ hạng**
 
-Cả 60 hàng failed lịch sử lưu lý do “Thiếu full_name, skills sau 2 lần thử.” Bản ghi chưa có run_id gốc; audit lưu từng CV ID, thời điểm lưu, lý do và đánh dấu chưa xác định run. Không gom chúng vào pilot hoặc suy đoán nguồn chỉ từ timestamp.
+| CV | Đoạn nguồn | Extract | Đối chiếu văn bản | Điểm / hạng |
+| --- | --- | --- | --- | --- |
+| 62c4d272 | “I worked with a dating project in a product company for almost 3 years” | 3,0 | Dưới 3 năm; số chính xác chưa được xác lập. | Quan sát: 0,958391 / 1. Tạm unknown: 0,758391 / 9. |
+| 700fef76 | “I have been learning programming for more than 3 years” | 3,0 | Thời gian học; số năm làm việc thương mại chưa xác định. | Quan sát: 0,956896 / 2. Tạm unknown: 0,756896 / 9. |
 
-Pilot A và B đều extract bằng Gemini. Warmup Qwen chỉ xác nhận nạp model; phép extract Qwen trực tiếp ở mục 12.9 là output thật riêng, không phải failover tự nhiên. Test 429/timeout/503 được gắn nhãn thay provider boundary. Embedding retry cùng model Gemini với backoff 10/20/40 giây + jitter 1–3 giây; lỗi schema extraction làm failed riêng CV. MODEL_OK là request riêng, không cộng token hay latency của nó vào toàn pilot.
+Phép thử thay kinh nghiệm của từng CV bằng unknown riêng lẻ và giữ nguyên chín điểm còn lại trong Top 10 đã lưu. Mỗi trường hợp giảm 0,2 điểm và về hạng 9; cách so sánh này cô lập ảnh hưởng của thành phần kinh nghiệm.
 
-### 12.10.4 Timeline và ý nghĩa đồng thời
+Lỗi “almost 3” và việc đồng nhất thời gian học với thời gian làm có thể lan sang lời giải thích và câu hỏi phỏng vấn. Node human_review tạo điểm kiểm tra thông tin nguồn trước khi HR duyệt.
 
-| Mốc tương đối trong log | Sự kiện | Ý nghĩa |
-|---|---|---|
-| t+0,000 s | SDK bắt đầu xử lý chat đầu | Mốc quy chiếu pilot-B-20 |
-| t+5,022 s và t+10,003 s | Hai lời gọi chat kế tiếp | Concurrency 4 không đồng nghĩa bốn lượt cloud khởi phát đồng thời |
-| t+13,957 s | Một nhánh commit extraction_cache | Các nhánh khác còn xử lý; chưa embed riêng CV này |
-| t+108,953 s | Nhánh cuối commit cache | Log có đủ 20 cache writes |
-| t+109,164 s | phase=embed_upsert, batch_size=20 | Pha 2 bắt đầu sau toàn bộ cache |
-| t+118,628 s | batchEmbedContents HTTP 200 | Một response batch, vector riêng từng CV |
+### 12.4.4 Resume và tính lũy đẳng
 
-Reducer nối các phần cập nhật; barrier đồng bộ các nhánh; rank sắp xếp ổn định theo score và CV ID. Đây là ba nhiệm vụ khác nhau. Pacer cấp lượt qua SQLite, concurrency giới hạn nhánh đang hoạt động. Mốc SDK không phải timestamp trên đường truyền; khoảng cách log nhỏ nhất 4,981 s không chứng minh giới hạn tuyệt đối 5 s giữa mọi request mạng.
+Mục tiêu là kiểm tra một lượt tìm kiếm có thể dừng chờ HR và tiếp tục đúng trạng thái. search_id được dùng làm thread_id của SqliteSaver; khi có quyết định, Command(resume=...) tiếp tục thread đó. Các search được giữ tách biệt trong Bảng 12.10.
 
-### 12.10.5 Ví dụ qua retrieval score explain và chọn sẵn
+**Bảng 12.10 – Minh chứng human review theo search**
 
-Trong search a91025e0f20f489db58dda8d4a739efe, CV 2bc3301a có similarity=0,8190341294, vượt ngưỡng retrieval 0,55. Query có skills rỗng nên skill_fit=1, đóng góp 0,5. Theo giá trị đã extract là 2 năm và min_years=3, experience_fit=2/3 đóng góp 0,133333. Similarity đóng góp 0,245710; tổng làm tròn là 0,879044, hạng 9 trong shortlist lưu trữ.
+| Search rút gọn | Kết quả lưu | Minh chứng |
+| --- | --- | --- |
+| a91025e0 | 10 CV duyệt; 60 câu hỏi | report-audit-20261024.json; ba ảnh giao diện Top 10. |
+| c3adbe3a | 1 CV duyệt; 6 câu hỏi | report-audit-20261024.json; ảnh top1-awaiting-review và top1-completed. |
+| 13dbc9cc | pending/0 câu → approved/6 câu | before-review.json và after-review.json; next từ human_review thành rỗng. |
+| lab-review-1 | output [] → [A,B]; replay giữ [A,B] | lab-start.json, lab-resume.json, lab-replay.json; process mới dùng cùng thread. |
 
-Score từ 0,5 dẫn tới explain và UI chọn sẵn dù số năm đã lưu chưa đạt 3. Điểm cao không xác nhận mọi điều kiện bắt buộc. CV nguồn đề cập thời gian từng dự án nên tổng kinh nghiệm cần xác minh độc lập; ví dụ này giải thích phép tính trên dữ liệu extract, không xác nhận 2 năm là ground truth.
+human_review không ghi nghiệp vụ trước interrupt. Khi resume, node chạy lại từ đầu; claim_review nhận quyền xử lý nguyên tử, resume_search đối chiếu quyết định và save_review thay tập câu hỏi trong transaction thay vì nối thêm bản sao. Test checkpoint chạy ở process mới xác nhận cùng thread khôi phục được, thread sai bị từ chối và replay giữ kết quả.
 
-### 12.10.6 Phân tích lỗi trích xuất và ảnh hưởng thứ hạng
+Bằng chứng cơ chế nằm trong test_workflows.py, test_database.py và test_lab_checkpoint.py; các giới hạn về khởi động lại web và số lần gọi model được tập trung ở 12.5.1.
 
-| CV | Đoạn nguồn | Extract | Đối chiếu văn bản | Độ nhạy của điểm và thứ hạng |
-|---|---|---:|---|---|
-| 62c4d272 | “I worked with a dating project in a product company for almost 3 years” | 3,0 | Dưới 3, chưa có số chính xác; không tự gán 2,9 | Hạng 1, score 0,958391; tạm unknown: 0,758391, hạng 9 |
-| 700fef76 | “I have been learning programming for more than 3 years” | 3,0 | Số năm làm việc thương mại chưa xác định; thời gian học không phải kinh nghiệm làm việc | Hạng 2, score 0,956896; tạm unknown: 0,756896, hạng 9 |
+## 12.5 Giới hạn kết luận, sự cố lịch sử và khả năng tái lập
 
-Đây là đối chiếu nguồn, chưa phải bộ nhãn HR. Phép độ nhạy thay số năm của từng CV bằng unknown riêng lẻ, giữ điểm của chín CV còn lại và chỉ xét Top 10 đã lưu. Không phải rerun retrieval, không phải ground truth được sửa, không phải thứ hạng khi sửa cả hai đồng thời. Không sửa đè dữ liệu lịch sử. evidence-review.json lưu nguồn, giá trị extract, đánh giá đối chiếu và phép tính.
+### 12.5.1 Phạm vi và giới hạn thực nghiệm
 
-### 12.10.7 Resume và tiêu chí hoàn tất
+Quy mô và thước đo. Baseline FTS5 đo truy hồi từ khóa trên 100.000 CV; mỗi pilot cloud chỉ chọn 20 CV. Số ready hoặc vector quan sát được không chứng minh đã index toàn corpus. Chưa có bộ nhãn HR độc lập để tính Precision@k, Recall@k hay nDCG@k; unit/integration tests xác nhận logic trong phạm vi test, không đo độ đúng tuyển dụng của LLM.
 
-Top-10/60 câu hỏi thuộc a91025e0f20f489db58dda8d4a739efe. Top-1/6 câu hỏi thuộc c3adbe3a46d348a1be2e0577737d9b4f. Lượt Top-1 bổ sung 13dbc9cc7fad4f29a96bdf686fd3d9e5 cũng có 6 câu hỏi riêng. Không ghép ba search thành một lượt.
+Ý nghĩa điểm. Score là tổng trọng số để ưu tiên, không phải xác suất tuyển dụng hoặc bảo đảm đạt mọi điều kiện. min_years là điểm mềm; skills rỗng cho skill_fit=1 và cộng 0,5. Ví dụ cv-2bc3301a tính trên giá trị extract, chưa xác nhận 2 năm là tổng kinh nghiệm đúng. Phép unknown ở Bảng 12.9 là phân tích độ nhạy trong Top 10 cố định, không phải ground truth, rerun retrieval hoặc kết quả sửa đồng thời cả hai CV.
 
-Theo tài liệu LangGraph, node chứa interrupt chạy lại từ đầu khi resume bằng cùng thread_id. human_review không ghi nghiệp vụ trước interrupt. Claim review được nhận nguyên tử; save_review thay câu hỏi của search trong transaction nên replay không append bản sao. Nếu model đã sinh kết quả nhưng process dừng trước checkpoint, chưa có bảo đảm gọi LLM đúng một lần. Nguồn: https://docs.langchain.com/oss/python/langgraph/interrupts
+Tiền xử lý. contacts-v1 trong benchmark và contacts-v2 hiện hành là hai phiên bản khác nhau; chạy lại bằng v2 có thể đổi số thay thế và thời gian. Regex chỉ che thông tin nhận diện được; tên trong văn bản, công ty, địa điểm và liên hệ viết né vẫn có thể còn. Tên hiển thị ẩn danh không đồng nghĩa JSONL nguồn đã được ẩn danh hoàn toàn.
 
-| status | outcome dùng cho UI API và thống kê | Tiêu chí |
-|---|---|---|
-| running / awaiting_review | pending | Chưa kết thúc, có thể đang chờ HR |
-| completed | succeeded | Không errors; mỗi CV approved có đúng 2 câu mỗi loại; không chọn CV thì không yêu cầu câu hỏi |
-| completed | completed_with_errors | Graph kết thúc nhưng có errors hoặc câu hỏi thiếu/sai số lượng |
-| failed | failed | Search bị abort, chẳng hạn lỗi retrieval |
+Đồng thời và model. Timeline dùng timestamp log SDK, không phải timestamp request trên mạng; khoảng cách nhỏ nhất đã lưu là 4,981 giây nên không dùng log đó để khẳng định giới hạn tuyệt đối 5 giây. Pilot A/B dùng cloud; warm-up Qwen và phép extract Qwen trực tiếp là bằng chứng riêng, chưa chứng minh failover tự nhiên trong pilot. Test mock 429/timeout/503 xác nhận logic chuyển model; embedding giữ cùng Gemini và retry backoff 10/20/40 giây cộng jitter 1–3 giây.
 
-API thêm errors, approved_count, question_count, expected_question_count, incomplete_cv_ids. UI và thống kê lịch sử dùng cùng outcome; không coi mọi completed là thành công. Lịch sử không đọc được checkpoint lỗi được đánh dấu không xác minh được thay vì mặc định thành công. Đọc snapshot ở process mới và lab resume ở process mới không được gọi là thử chủ động web restart/resume.
+Khôi phục và chi phí. Đọc checkpoint hoặc resume lab ở process độc lập chưa tương đương thử restart/resume qua web. Transaction ngăn nhân đôi bản ghi nghiệp vụ, nhưng chưa bảo đảm model chỉ được gọi đúng một lần nếu process dừng sau response và trước checkpoint. Usage MODEL_OK không được cộng vào pilot; chưa có phép đo chi phí toàn pilot đầy đủ. Auth, OCR và quyết định tuyển dụng tự động nằm ngoài phạm vi bàn giao.
+
+### 12.5.2 Sự cố môi trường và dữ liệu lịch sử
+
+Các phép thử OpenAI ban đầu bị chặn trước xử lý do thiếu dependency/DNS 11001, với 0/100 CV được xử lý; những lượt thử Gemini cũ gặp DNS/timeout hoặc HTTP 504 cũng không tạo bằng chứng suy luận thành công. Các log được giữ riêng trong artifact sự cố, còn kết quả thành công được tổng hợp tại 12.3.3.
+
+SQLite có 60 CV failed lịch sử với lý do lưu “Thiếu full_name, skills sau 2 lần thử.” Các hàng thiếu run ID gốc được gắn legacy-unattributed trong evidence-review.json và không cộng vào mẫu số pilot A/B. Một search lịch sử 154131c9 có status=completed nhưng 0 câu hỏi và ConnectError tại generate_questions; đây là trường hợp phân biệt workflow kết thúc với đầu ra đủ dùng theo Bảng 12.2.
+
+### 12.5.3 Lệnh tái lập và danh mục tệp minh chứng
+
+Các đường dẫn dưới đây tính từ thư mục gốc repository. Artifact gốc, JSON và log đầy đủ được giữ nguyên; bảng trong phần chính chỉ trình bày số liệu và hành vi cần phân tích.
+
+**Bảng 12.11 – Danh mục minh chứng và mục sử dụng**
+
+| Nhóm | Tệp / thư mục | Dùng tại |
+| --- | --- | --- |
+| Nguồn và môi trường | data/datasets/djinni/sample-100000.manifest.json; data/benchmarks/environment_20261024.json | 12.2 |
+| Baseline contacts-v1 | data/benchmarks/djinni_100k_filtered_20261024.json; experiments_20261024.json | 12.2; 12.3.2 |
+| SDK độc lập | data/benchmarks/gemini-flash-lite-check.json | 12.3.3 |
+| Pilot 0 / A | data/benchmarks/pilot-20-results-20261024.json; pilot-20-verification-20261024.json; gemini-dataset-run.json | 12.3.3 |
+| Pilot B và review | data/benchmarks/proof/live-validation-20261024/: pilot-run.json, resume-run.json, pilot.log, before-review.json, after-review.json, summary.json, qwen-real-extract.json | 12.3.3; 12.4 |
+| Search, ảnh và lỗi nguồn | data/benchmarks/report-audit-20261024.json; proof/report-audit-20261024/; proof/review-followup/evidence-review.json | 12.4; 12.5.2 |
+| Tests và checkpoint | data/benchmarks/proof/review-followup/: tests.log, tests.xml, frontend-tests.log, lab-*.json, lab-checkpoints-v2.db, handoff-checkpoints.db | 12.3.1; 12.4.4 |
+| Sự cố cũ | data/benchmarks/pilot_100_20261024.json; gemini-execution-20261024.json; gemini-deadline-investigation-20261024.json; experiments_20261024.json | 12.5.2 |
+| Tái lập mã | pyproject.toml, uv.lock; src/backend/graphs/; labs/state_checkpoint/; scripts/package_handoff.py | 12.1; Phần IV |
+| Gói bàn giao | data/benchmarks/proof/: jd-matching-handoff.zip, review-followup/handoff-manifest.json; working-tree.patch trong ZIP | 12.5.3 |
+
+Trừ các đường dẫn bắt đầu bằng data/, các tên nối tiếp trong cùng ô thuộc thư mục đã nêu ở đầu ô. Các snapshot lịch sử giữ số test và cấu hình tại thời điểm của chính chúng.
+
+**Bảng 12.12 – Định danh nguồn và truy vết**
+
+| Đối tượng | Định danh đầy đủ |
+| --- | --- |
+| Commit mã ứng dụng / lab | 8861d52ba723b7a5f6f9a625118d23cc48e43db3 |
+| Dataset revision | f4d04f624126e27a17770d06953dce7e914ce214 |
+| SHA-256 Parquet nguồn | a7b1378e0b231507c377659bf2c80fa4ba60c4e31e1107b13425d103879ecc3b |
+| SHA-256 JSONL 100k | e446c3fa164a3003f453f28ad6130fbda79cd2f31f8b86620edabcf338984f8d |
+| SHA-256 pilot B 20 CV | 948e2ce992531c727d1875bb00c3bc6535bec9c861c72b6b5b7a6302d00e8ae4 |
+| Search / thread_id | edd6a99b380d426292266df10f7f0167 (pilot 0)<br>154131c9b3fd4c64b33aaf918e82d827 (runner A)<br>a91025e0f20f489db58dda8d4a739efe (Top 10)<br>c3adbe3a46d348a1be2e0577737d9b4f (Top 1)<br>13dbc9cc7fad4f29a96bdf686fd3d9e5 (Top 1 bổ sung) |
+| CV case studies | djinni-2bc3301a-5066-5dfc-ac78-1dfc3ee9b5fd<br>djinni-62c4d272-3685-5392-8539-69b59d802888<br>djinni-700fef76-d28b-5075-bc93-4d3a63c5ea15 |
+
+Manifest ghi HEAD thực tế, working_tree_dirty và SHA-256 từng tệp trong gói. Các chỉnh lý tài liệu sau commit đi kèm source và patch; HEAD không được dùng để đại diện riêng cho phần chưa commit. Mọi mã băm nguồn cũ vẫn được giữ trong artifact gốc và bản lưu chương trước biên tập.
+
+Lệnh tái lập được tách theo tác động. Hai nhóm đầu chỉ chạy test hoặc baseline cục bộ; nhóm cloud bên dưới phát sinh request thật và vẫn giới hạn 20 CV.
+
+```powershell
+uv sync --locked --extra research
+uv run --no-sync python -m pytest -q
+node --test tests/frontend.test.cjs
+uv run --no-sync python -m scripts.benchmark_corpus --repeats 50 --redact-contacts --database data/benchmarks/fts-recheck.sqlite --report data/benchmarks/fts-recheck.json
+```
+
+Baseline chạy lại dùng bộ lọc hiện hành; Bảng 12.4 và 12.6 dẫn kết quả contacts-v1 đã lưu. Dùng tên output mới để bảo toàn báo cáo gốc.
+
+```powershell
+uv run --no-sync python -m scripts.check_gemini_model --transport sdk --model gemini-3.5-flash-lite --timeout 60 --report data/benchmarks/model-recheck.json
+.\scripts\run-real-data.ps1 -Limit 20
+uv run --no-sync python -m scripts.run_dataset --input data/benchmarks/proof/live-validation-20261024/pilot-input.jsonl --limit 20 --batch-size 20 --report data/benchmarks/pilot-recheck.json
+```
+
+already_ready phụ thuộc trạng thái SQLite/Chroma hiện có; do đó lệnh chạy lại có thể tái sử dụng hồ sơ thay vì tạo một lượt ingest lạnh. Mỗi lần chạy lưu báo cáo riêng và đối chiếu đúng search/thread.
+
+```powershell
+uv run --no-sync python -m labs.state_checkpoint.solution --db data/lab/recheck.db --phase start
+uv run --no-sync python -m labs.state_checkpoint.solution --db data/lab/recheck.db --phase resume
+uv run --no-sync python -m scripts.package_handoff
+```
+
+Nguồn tham khảo: LangGraph Interrupts — https://docs.langchain.com/oss/python/langgraph/interrupts ; Djinni Dataset — https://huggingface.co/datasets/lang-uk/recruitment-dataset-candidate-profiles-english .
 
 # PHẦN IV TỰ ĐÁNH GIÁ VÀ BÀN GIAO
 
@@ -535,15 +618,15 @@ Những cơ chế có thể trình diễn gồm TypedDict, reducer, fan-out, bar
 
 labs/state_checkpoint có starter.py, solution.py và README. Đây là chương trình xác định dùng LangGraph/SQLite thật, không phải output model. Starter yêu cầu hàm collect trả cập nhật danh sách một phần tử. Hai nhánh collected=[A] và [B] được reducer hợp nhất thành [A,B]; barrier cho review đọc đủ dữ liệu.
 
-Chạy python -m labs.state_checkpoint.solution --db data/lab/checkpoints.db --phase start: next=[review], output rỗng. Chạy process mới với --phase resume và cùng thread_id=lab-review-1: output=[A,B], next rỗng. Resume lần nữa không nhân đôi; thread khác bị từ chối vì không có checkpoint. lab-start.json, lab-resume.json, lab-replay.json và SQLite mẫu nằm trong snapshot.
+Thực hiện start và resume theo lệnh ở 12.5.3: next=[review] và output rỗng trước duyệt; process mới dùng cùng thread_id=lab-review-1 cho output=[A,B], next rỗng. Resume lần nữa không nhân đôi; thread khác bị từ chối vì không có checkpoint. lab-start.json, lab-resume.json, lab-replay.json và SQLite mẫu nằm trong snapshot.
 
 ## 13.3 Sử dụng AI và lỗi có bằng chứng
 
 Trợ lý AI hỗ trợ rà soát, soạn bổ sung, đề xuất test và viết lab. Nhóm cần tự chạy, giải thích và xác nhận đóng góp khi bảo vệ; không mặc định coi nội dung AI là đã kiểm chứng.
 
-Hai lỗi Gemini có nguồn ở mục 12.10.6 là almost 3 thành 3 và thời gian học bị coi là kinh nghiệm. Sai lệch có thể lan sang giải thích/câu hỏi; văn bản trôi chảy không chứng minh dữ liệu đúng.
+Hai lỗi Gemini có nguồn ở mục 12.4.3 là almost 3 thành 3 và thời gian học bị coi là kinh nghiệm. Sai lệch có thể lan sang giải thích/câu hỏi; văn bản trôi chảy không chứng minh dữ liệu đúng.
 
-Mã lab do AI soạn ban đầu dùng SQLite với check_same_thread=True, gây ProgrammingError khi checkpoint chạy ở background thread. Đã sửa thành check_same_thread=False như ứng dụng rồi chạy lại start/resume/replay và regression tests. Không mô tả lỗi kỹ thuật này thành LangGraph tự mất state. Bộ test mới đạt 119 passed và 15 subtests; frontend đạt 5 tests. Đây là lượt test mã nguồn bổ sung, không thay số 107 + 12 trong lượt thực nghiệm trước.
+Mã lab do AI soạn ban đầu dùng SQLite với check_same_thread=True, gây ProgrammingError khi checkpoint chạy ở background thread. Đã sửa thành check_same_thread=False như ứng dụng rồi chạy lại start/resume/replay và regression tests. Không mô tả lỗi kỹ thuật này thành LangGraph tự mất state. Kết quả kiểm thử hiện hành được tổng hợp tại Bảng 12.5; các mốc trước được giữ trong artifact lịch sử.
 
 ## 13.4 Nhật kí kỹ thuật và xác nhận đóng góp
 
@@ -568,7 +651,7 @@ Manifest snapshot ghi HEAD thực tế, trạng thái working tree và SHA-256 s
 
 Lượt hoàn thiện dùng dữ liệu đã có và test xác định, không gửi request cloud hoặc mở ingest mới. Phần chưa thể xác nhận thay nhóm là nhật kí cá nhân và đóng góp; provenance của lỗi lịch sử vẫn được đánh dấu thiếu. Không tự mở rộng auth/OCR/hard filter vào phạm vi.
 
-Snapshot bàn giao ghi HEAD nền bd29fa7db06ce698b2c5caea1c2d7889d4d0242e và working_tree_dirty=true. Không tạo được commit mới do quyền ghi .git/index.lock bị từ chối. Vì vậy HEAD này không đại diện riêng cho code mới; source đầy đủ, working-tree.patch và manifest hash trong gói snapshot mô tả đúng trạng thái bàn giao.
+Định danh commit mã nguồn, dataset và hash được tập trung ở 12.5.3. Các chỉnh lý tài liệu sau commit đi kèm source và working-tree.patch; manifest xác định đúng trạng thái từng tệp của bản bàn giao.
 
 # **TÀI LIỆU THAM KHẢO**
 

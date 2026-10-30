@@ -26,6 +26,22 @@ def main():
     paths=git('ls-files','--cached','--others','--exclude-standard').splitlines()
     files={f'source/{name}':ROOT/name for name in paths if name and not name.startswith('data/') and Path(name).name!='.env'}
     selected=['data/benchmarks/gemini-dataset-run.json','data/benchmarks/gemini-model-check.json',
+        'data/datasets/djinni/sample-100000.manifest.json',
+        'data/benchmarks/environment_20261024.json',
+        'data/benchmarks/djinni_100k_filtered_20261024.json',
+        'data/benchmarks/djinni_100k_fts.json',
+        'data/benchmarks/experiments_20261024.json',
+        'data/benchmarks/gemini-flash-lite-check.json',
+        'data/benchmarks/report-audit-20261024.json',
+        'data/benchmarks/pilot_100_20261024.json',
+        'data/benchmarks/gemini-execution-20261024.json',
+        'data/benchmarks/gemini-deadline-investigation-20261024.json',
+        'data/benchmarks/proof/chapter12-editorial/report-before.pdf',
+        'data/benchmarks/proof/chapter12-editorial/chapter12-before.md',
+        'data/benchmarks/proof/chapter12-editorial/editorial-verification.json',
+        'data/benchmarks/proof/chapter12-editorial/doi-chieu-before.md',
+        'data/benchmarks/pilot-20-results-20261024.json',
+        'data/benchmarks/pilot-20-verification-20261024.json',
         'data/benchmarks/proof/live-validation-20261024/pilot-input.jsonl',
         'data/benchmarks/proof/live-validation-20261024/pilot-input.manifest.json',
         'data/benchmarks/proof/live-validation-20261024/pilot-run.json',
@@ -35,6 +51,10 @@ def main():
         'data/benchmarks/proof/live-validation-20261024/after-review.json',
         'data/benchmarks/proof/live-validation-20261024/qwen-real-extract.json',
         'data/benchmarks/proof/live-validation-20261024/summary.json']
+    image_folder=ROOT/'data/benchmarks/proof/report-audit-20261024'
+    if image_folder.is_dir():
+        selected += [p.relative_to(ROOT).as_posix() for p in image_folder.iterdir()
+                     if p.is_file() and p.suffix.lower() in ('.png','.jpg','.jpeg')]
     selected += [str(p.relative_to(ROOT)).replace('\\','/') for p in OUT.iterdir() if p.is_file() and p.suffix in ('.json','.xml','.log','.db','.pdf') and p.name!='handoff-manifest.json' and p.name!='lab-checkpoints.db']
     for name in selected:
         if (ROOT/name).is_file():files['evidence/'+name]=ROOT/name
