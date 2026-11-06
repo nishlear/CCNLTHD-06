@@ -56,6 +56,7 @@ def gemini_api_key() -> str:
 
 def require_gemini() -> None:
     if not gemini_api_key():
+        logger.warning("GEMINI_API_KEY (or GOOGLE_API_KEY) is not set; rejecting model request")
         raise ConfigurationError("Configure GEMINI_API_KEY (or GOOGLE_API_KEY) on the server.")
 
 
@@ -367,7 +368,7 @@ class MatchExplanation(BaseModel):
 
 def explain_match(cv: dict, criteria: dict, result: dict) -> str:
     return structured(MatchExplanation,
-                      "Explain this CV/job match in 1-2 Vietnamese sentences. "
+                      "Explain this CV/job match in 1-2 Vietnamese sentences with full diacritics. "
                       "Mention matched/missing skills and unknown experience where relevant. "
                       "The score is a ranking aid, not a probability or hiring decision.",
                       {"cv": _job_profile(cv), "criteria": criteria, "score": result}).reasons
