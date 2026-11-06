@@ -17,11 +17,14 @@ _PROFILE = re.compile(
     r"(?i)(?<![\w@])(?:linkedin\.com|github\.com|gitlab\.com|t\.me|telegram\.me|"
     r"facebook\.com|instagram\.com|twitter\.com|x\.com)/[^\s<>\[\]\"']+"
 )
-_INTERNATIONAL_PHONE = re.compile(r"(?<![\w+])\+\d[\d ().-]{6,27}\d(?!\w)")
-_LOCAL_PHONE = re.compile(r"(?<![\w+])0(?:[ .()-]*\d){8,10}(?!\w)")
+# One separator between phone digits. "." and "-" must sit directly between
+# digits, so sentence punctuation like "4567. 6 years" ends the number.
+_PHONE_SEP = r"(?:[.-]|[ ]?\([ ]?|[ ]?\)[ ]?|[ ]-[ ]|[ ])"
+_INTERNATIONAL_PHONE = re.compile(rf"(?<![\w+])\+\d(?:{_PHONE_SEP}?\d){{6,14}}(?!\w)")
+_LOCAL_PHONE = re.compile(rf"(?<![\w+])0(?:{_PHONE_SEP}?\d){{8,10}}(?!\w)")
 _LABELLED_PHONE = re.compile(
     r"(?i)\b(?:phone|telephone|tel|mobile|whatsapp|viber|sđt|điện thoại)\s*[:=]\s*"
-    r"(?P<number>\+?\d[\d ().-]{5,27}\d)(?!\w)"
+    rf"(?P<number>\+?\d(?:{_PHONE_SEP}?\d){{6,14}})(?!\w)"
 )
 _MESSENGER = re.compile(
     r"(?i)\b(?:telegram|skype|discord)\s*[:=]\s*@?[a-z0-9_.+-]{3,}"
