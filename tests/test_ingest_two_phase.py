@@ -181,15 +181,15 @@ def test_pacing_is_shared_with_a_fresh_process(isolated):
 
 
 def test_shared_pacer_rechecks_slot_after_waking(isolated, monkeypatch):
-    times = iter([100., 101., 105.])
+    times = iter([100., 101., 106.])  # 10 RPM -> one slot every 6 s
     from src.backend import cloud_pacing
     monkeypatch.setattr(cloud_pacing.time, "time", lambda: next(times))
     waits = []
     monkeypatch.setattr(services, "_sleep", waits.append)
     limiter = services.SharedPacingLimiter()
     assert limiter.acquire() == 0.
-    assert limiter.acquire() == 4.
-    assert waits == [4.]
+    assert limiter.acquire() == 5.
+    assert waits == [5.]
 
 
 def test_two_ingests_in_one_process_do_not_overlap_phases(model_doubles, monkeypatch):
@@ -251,11 +251,11 @@ def test_cli_model_check_uses_same_application_database(isolated, monkeypatch):
     from scripts.check_gemini_model import pace_model_check
     from src.backend import cloud_pacing
     monkeypatch.setenv("APP_DB_PATH", str(isolated / "app.db"))
-    monkeypatch.setenv("GEMINI_MAX_RPM", "12")
+    monkeypatch.setenv("GEMINI_MAX_RPM", "10")
     wait = Mock()
     monkeypatch.setattr(cloud_pacing, "wait_for_slot", wait)
     pace_model_check()
-    wait.assert_called_once_with(Path(isolated / "app.db"), "gemini-3.5-flash-lite", 12)
+    wait.assert_called_once_with(Path(isolated / "app.db"), "gemini-3.5-flash-lite", 10)
 
 
 @pytest.mark.parametrize("bad", [None, [], "invalid", {"cv_id": "bad", "extracted": []},

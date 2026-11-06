@@ -20,7 +20,7 @@ def pace_model_check():
     # Keep this diagnostic stdlib-only while sharing the application's clock.
     from src.backend.cloud_pacing import wait_for_slot
     path = Path(os.getenv("APP_DB_PATH", str(Path(os.getenv("DATA_DIR", "data")) / "app.db")))
-    wait_for_slot(path, "gemini-3.5-flash-lite", int(os.getenv("GEMINI_MAX_RPM", "12")))
+    wait_for_slot(path, "gemini-3.5-flash-lite", int(os.getenv("GEMINI_MAX_RPM", "10")))
 
 
 def check_model(model, key, timeout_seconds=60.0, transport="urllib"):

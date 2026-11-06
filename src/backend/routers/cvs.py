@@ -14,7 +14,7 @@ router = APIRouter(prefix="/cvs", tags=["cvs"])
 
 def require_models():
     try:
-        services.require_gemini()
+        services.require_models()
     except services.ConfigurationError as exc:
         raise HTTPException(503, str(exc)) from exc
 

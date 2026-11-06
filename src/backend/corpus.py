@@ -159,7 +159,7 @@ def start_job(params):
     else:
         resolve_corpus(params.get("corpus_id"))
     if action == "ingest":
-        services.require_gemini()
+        services.require_models()
     job_id = uuid.uuid4().hex
     body = {"id": job_id, "action": action, "params": params, "status": "queued", "phase": "Đang chuẩn bị",
             "created_at": db.now(), "updated_at": db.now(), "processed": 0, "ready": 0, "failed": 0,

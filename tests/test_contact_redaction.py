@@ -84,7 +84,7 @@ class ContactRedactionTests(unittest.TestCase):
             {"cv_id": item["cv_id"], "status": "ready"} for item in items])
         backend = types.ModuleType("src.backend")
         backend.db = database
-        backend.services = types.SimpleNamespace(require_gemini=Mock(),
+        backend.services = types.SimpleNamespace(require_models=Mock(),
             model_settings=Mock(return_value={"provider": "google_gemini"}),
             has_vector=Mock(side_effect=lambda cv_id: cv_id == "filtered"))
         searches = types.ModuleType("src.backend.routers.searches")
