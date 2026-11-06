@@ -46,9 +46,23 @@ def parse_query(state: SearchState) -> dict:
                 **node_error("parse_query", exc)}
 
 
+def retrieval_text(criteria: dict, query: str) -> str:
+    """Build the vector query from parsed criteria, in the same shape as CV embedding_text."""
+    role = " ".join(str(k) for k in [criteria.get("level"), *(criteria.get("keywords") or [])] if k)
+    skills = ", ".join(str(s) for s in criteria.get("skills") or [] if s)
+    if not role and not skills:
+        return query
+    years = criteria.get("min_years")
+    parts = [role or query, f"Skills: {skills}" if skills else ""]
+    if years is not None:
+        parts.append(f"Experience: {years:g} years")
+    return " | ".join(p for p in parts if p)
+
+
 def retrieve(state: SearchState) -> dict:
     # Retrieval errors abort the search; the API marks its business row failed.
-    return {"candidates": services.vector_search(state["query"], config.RETRIEVE_K)}
+    text = retrieval_text(state.get("criteria") or {}, state["query"])
+    return {"candidates": services.vector_search(text, config.RETRIEVE_K)}
 
 
 def score_cv(state: dict) -> dict:

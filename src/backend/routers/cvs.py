@@ -19,22 +19,27 @@ def require_models():
         raise HTTPException(503, str(exc)) from exc
 
 
+def reject(status: int, detail: str) -> HTTPException:
+    logger.warning("operation=upload status=%s detail=%s", status, detail)
+    return HTTPException(status, detail)
+
+
 @router.post("", response_model=UploadResponse)
 def upload_cvs(files: list[UploadFile] = File(...)):
     require_models()
     if len(files) > config.MAX_UPLOAD_FILES:
-        raise HTTPException(400, f"Mỗi lần tải tối đa {config.MAX_UPLOAD_FILES} CV.")
+        raise reject(400, f"Mỗi lần tải tối đa {config.MAX_UPLOAD_FILES} CV.")
     inputs: list[FileInput] = []
     try:
         for f in files:
             name = Path(f.filename or "cv.pdf").name
             if not name.lower().endswith(".pdf"):
-                raise HTTPException(400, f"{name} không phải file PDF")
+                raise reject(400, f"{name} không phải file PDF")
             content = f.file.read(config.MAX_UPLOAD_BYTES + 1)
             if len(content) > config.MAX_UPLOAD_BYTES:
-                raise HTTPException(413, f"{name} vượt quá 10 MB.")
+                raise reject(413, f"{name} vượt quá 10 MB.")
             if not content:
-                raise HTTPException(400, f"{name} là file rỗng.")
+                raise reject(400, f"{name} là file rỗng.")
             cv_id = uuid.uuid4().hex
             path = config.UPLOAD_DIR / f"{cv_id}.pdf"
             inputs.append({"cv_id": cv_id, "file_name": name, "file_path": str(path)})

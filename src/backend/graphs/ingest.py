@@ -169,6 +169,15 @@ def cache_extraction(state: ProcessCVState) -> dict:
                           ("cv_id", "file_name", "raw_text", "extracted", "source")} ]}
 
 
+def route_validate(state: ProcessCVState) -> str:
+    if not state.get("missing_fields"):
+        return "cache_extraction"
+    # After a local (Ollamilover, Gemini is out of quota: do not retry it.
+    if state.get("source") != "ollama" and state.get("attempts", 0) < config.MAX_EXTRACT_ATTEMPTS:
+        return "extract"
+    return "mark_failed"
+
+
 def build_process_graph():
     """Phase 1 only. No embedding or vector-store calls in this graph."""
     graph = StateGraph(ProcessCVState)
@@ -184,11 +193,10 @@ def build_process_graph():
     graph.add_conditional_edges("extract", lambda s: "mark_failed" if s.get("error") else "validate",
                                 ["mark_failed", "validate"])
 
-    # One cloud attempt, then one local attempt only on quota/timeout errors.
-    # A malformed/incomplete result fails this record rather than spending a
-    # second cloud request or cycling back to Gemini after local failover.
-    graph.add_conditional_edges("validate", lambda s: "mark_failed" if s.get("missing_fields") else "cache_extraction",
-                                ["mark_failed", "cache_extraction"])
+    # Missing fields loop back to extract (with missing_fields in the prompt)
+    # until MAX_EXTRACT_ATTEMPTS is reached; set it to 1 to disable the retry.
+    graph.add_conditional_edges("validate", route_validate,
+                                ["extract", "mark_failed", "cache_extraction"])
     graph.add_edge("cache_extraction", END)
     graph.add_edge("mark_failed", END)
     return graph.compile()
