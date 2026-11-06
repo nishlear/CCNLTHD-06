@@ -22,8 +22,8 @@ def claim_slot(path: Path, name: str, interval: float, current_time: float | Non
 
 
 def wait_for_slot(path: Path, name: str, rpm: int) -> None:
-    if not 1 <= rpm <= 12:
-        raise ValueError("Chat RPM must be 1..12")
+    if not 1 <= rpm <= 10:
+        raise ValueError("Chat RPM must be 1..10")
     while True:
         wait = claim_slot(path, name, 60.0 / rpm)
         if not wait:

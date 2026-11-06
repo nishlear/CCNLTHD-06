@@ -47,13 +47,17 @@ All paths are relative to the working directory unless absolute.
 | Variable | Default | Purpose |
 |---|---|---|
 | `GEMINI_API_KEY` | unset | Required for new ingest/search operations |
-| `GEMINI_CHAT_MODEL` | `gemini-3.5-flash-lite` | Structured extraction, criteria, explanations, questions |
-| `GEMINI_EMBEDDING_MODEL` | `gemini-embedding-2` | Same model for index and queries |
-| `GEMINI_EMBEDDING_DIMENSIONS` | `768` | Fixed vector size; other values rejected |
+| `CHAT_MODEL` | `gemini-3.5-flash-lite` | Cloud chat model for extraction, criteria, explanations, questions; must be in `CLOUD_CHAT_MODELS` (Gemini 3.5–3.8 Flash, `deepseek-flash`, `gpt-6-luna`). Old name `GEMINI_CHAT_MODEL` still read |
+| `DEEPSEEK_API_KEY` / `OPENAI_API_KEY` | unset | Needed only when `CHAT_MODEL` is `deepseek-flash` / `gpt-6-luna` |
+| `EMBEDDING_MODEL` | `gemini-embedding-2` | Same model for index and queries; one of `gemini-embedding-2`, `text-embedding-3-small`, `text-embedding-3-large`. Old name `GEMINI_EMBEDDING_MODEL` still read |
+| `EMBEDDING_DIMENSIONS` | from model | Optional; must match the model (768 / 1536 / 3072) |
+| `VLLM_BASE_URL` | `http://127.0.0.1:8022/v1` | Endpoint for `qwen3.8-27b`; `VLLM_API_KEY` optional |
+| `VLLM_QWEN3_5_2B_URL` / `VLLM_QWEN3_5_4B_URL` | `:8024/v1` / `:8027/v1` | Endpoints for `qwen3.5-2b` / `qwen3.5-4b` |
+| `CHAT_MAX_OUTPUT_TOKENS` | `1024` | Output cap for DeepSeek/OpenAI/vLLM calls (256..8192); hitting it is an error |
 | `GEMINI_TIMEOUT_SECONDS` | `60` | Timeout per provider request |
 | `GEMINI_MAX_RETRIES` | `1` | Embedding SDK retries only; chat SDK attempts fixed to 1; 429 handled separately |
-| `GEMINI_MAX_RPM` | `12` | Shared chat pacer, at least 5 s between admissions; only 1..12 accepted |
-| `OLLAMA_CHAT_MODEL` | `qwen2.5:3b` | Only permitted local model |
+| `GEMINI_MAX_RPM` | `10` | Shared pacer for Gemini chat models (free-tier limit), at least 6 s between admissions; only 1..10 accepted. Other providers are not paced |
+| `OLLAMA_CHAT_MODEL` | `qwen2.5:3b` | Local fallback; any Qwen tag (e.g. `qwen3:4b`) |
 | `OLLAMA_KEEP_ALIVE` | `30m` | Only `30m` or `-1` accepted |
 | `OLLAMA_NUM_CTX` | `4096` | Fixed context size |
 | `OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | Local fallback endpoint |
@@ -62,7 +66,7 @@ All paths are relative to the working directory unless absolute.
 | `APP_DB_PATH` | `$DATA_DIR/app.db` | Business records |
 | `CHECKPOINT_DB_PATH` | `$DATA_DIR/checkpoints.db` | Durable LangGraph state |
 | `CHROMA_DIR` | `$DATA_DIR/chroma` | Persistent vector index |
-| `CHROMA_COLLECTION` | `cv_gemini_embedding_2_768_v1` | Collection with embedding-model metadata |
+| `CHROMA_COLLECTION` | `cv_<model>_<dims>_v1` | Derived from `EMBEDDING_MODEL`; any other value is rejected |
 | `MIN_SIMILARITY` | `0.55` | Experimental normalized-similarity cutoff |
 
 This baseline rejects other chat/embedding models, dimensions and collection names at startup. Records created by the old `change me` stubs do not have real text or vectors and must be reuploaded. Never commit `.env` or data files.
