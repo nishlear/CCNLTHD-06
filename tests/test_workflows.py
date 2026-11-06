@@ -113,13 +113,14 @@ def test_query_validation(client, query):
     assert client.post("/searches", json={"query": query}).status_code == 422
 
 
-def test_invalid_extraction_fails_without_cloud_retry_and_other_cv_continues(model_doubles, monkeypatch):
+@pytest.mark.parametrize("max_attempts", [1, 2])
+def test_invalid_extraction_retries_with_missing_fields_then_fails(model_doubles, monkeypatch, max_attempts):
+    monkeypatch.setattr(config, "MAX_EXTRACT_ATTEMPTS", max_attempts)
     monkeypatch.setattr(services, "pdf_to_text", lambda path: path)
     calls = {}
     def extract(text, missing):
-        calls[text] = calls.get(text, 0) + 1
+        calls.setdefault(text, []).append(list(missing))
         if text == "good":
-            assert missing == []
             return {"full_name": "Candidate", "skills": ["Python"]}, "gemini"
         return {"full_name": "Candidate", "skills": []}, "gemini"
     monkeypatch.setattr(services, "extract_cv", extract)
@@ -127,8 +128,30 @@ def test_invalid_extraction_fails_without_cloud_retry_and_other_cv_continues(mod
     out = ingest.run_ingest([{"cv_id": name, "file_name": name + ".pdf", "file_path": name}
                              for name in ("good", "bad")])
     assert [r["status"] for r in out] == ["ready", "failed"]
-    assert calls == {"good": 1, "bad": 1}
+    assert calls["good"] == [[]]
+    assert calls["bad"] == [[], ["skills"]][:max_attempts]
     assert "skills" in db.get_cv("bad")["error"]
+
+
+def test_retry_recovers_missing_fields(model_doubles, monkeypatch):
+    monkeypatch.setattr(services, "pdf_to_text", lambda path: path)
+    def extract(text, missing):
+        skills = ["Python"] if missing else []
+        return {"full_name": "Candidate", "skills": skills}, "gemini"
+    monkeypatch.setattr(services, "extract_cv", extract)
+    monkeypatch.setattr(services, "upsert_vectors", lambda *a: None)
+    out = ingest.run_ingest([{"cv_id": "x", "file_name": "x.pdf", "file_path": "x"}])
+    assert out[0]["status"] == "ready"
+
+
+def test_retrieve_uses_parsed_criteria(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(services, "vector_search", lambda text, k: seen.setdefault("text", text) and [])
+    search.retrieve({"query": "Tuyển backend Python 3 năm, biết Docker",
+                     "criteria": {"skills": ["Python", "Docker"], "min_years": 3,
+                                  "level": None, "keywords": ["backend"]}})
+    assert seen["text"] == "backend | Skills: Python, Docker | Experience: 3 years"
+    assert search.retrieval_text({"skills": [], "keywords": []}, "raw query") == "raw query"
 
 
 def test_pdf_and_index_errors_are_per_file(model_doubles, monkeypatch):
