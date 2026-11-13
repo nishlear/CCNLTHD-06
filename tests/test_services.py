@@ -73,7 +73,7 @@ def test_empty_collection_does_not_call_embedding(isolated, monkeypatch):
 def test_embedding_model_change_requires_new_collection(isolated, monkeypatch):
     services.collection()
     services.collection.cache_clear()
-    monkeypatch.setattr(config, "GEMINI_EMBEDDING_MODEL", "different-model")
+    monkeypatch.setattr(config, "EMBEDDING_MODEL", "different-model")
     with pytest.raises(services.ConfigurationError):
         services.collection()
 

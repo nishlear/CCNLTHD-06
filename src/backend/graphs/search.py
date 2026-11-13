@@ -46,9 +46,23 @@ def parse_query(state: SearchState) -> dict:
                 **node_error("parse_query", exc)}
 
 
+def retrieval_text(criteria: dict, query: str) -> str:
+    """Build the vector query from parsed criteria, in the same shape as CV embedding_text."""
+    role = " ".join(str(k) for k in [criteria.get("level"), *(criteria.get("keywords") or [])] if k)
+    skills = ", ".join(str(s) for s in criteria.get("skills") or [] if s)
+    if not role and not skills:
+        return query
+    years = criteria.get("min_years")
+    parts = [role or query, f"Skills: {skills}" if skills else ""]
+    if years is not None:
+        parts.append(f"Experience: {years:g} years")
+    return " | ".join(p for p in parts if p)
+
+
 def retrieve(state: SearchState) -> dict:
     # Retrieval errors abort the search; the API marks its business row failed.
-    return {"candidates": services.vector_search(state["query"], config.RETRIEVE_K)}
+    text = retrieval_text(state.get("criteria") or {}, state["query"])
+    return {"candidates": services.vector_search(text, config.RETRIEVE_K)}
 
 
 def score_cv(state: dict) -> dict:
@@ -113,7 +127,7 @@ def build_search_graph(checkpointer):
     graph.add_edge("parse_query", "retrieve")
     graph.add_conditional_edges("retrieve", lambda s: [
         Send("score_cv", {"candidate": c, "criteria": s["criteria"]})
-        for c in s["candidates"]] or END)
+        for c in s["candidates"]] or END, ["score_cv", END])
     graph.add_edge("score_cv", "rank")
 
     def route_explanations(state):
@@ -122,11 +136,11 @@ def build_search_graph(checkpointer):
         return [Send("explain", {"result": r, "criteria": state["criteria"]})
                 for r in state["shortlist"] if r["score"] >= config.EXPLAIN_THRESHOLD] or "human_review"
 
-    graph.add_conditional_edges("rank", route_explanations)
+    graph.add_conditional_edges("rank", route_explanations, ["explain", "human_review", END])
     graph.add_edge("explain", "human_review")
     graph.add_conditional_edges("human_review", lambda s: [
         Send("generate_questions", {"cv_id": cv_id, "criteria": s["criteria"]})
-        for cv_id in s["approved_cv_ids"]] or END)
+        for cv_id in s["approved_cv_ids"]] or END, ["generate_questions", END])
     graph.add_edge("generate_questions", END)
     return graph.compile(checkpointer=checkpointer)
 

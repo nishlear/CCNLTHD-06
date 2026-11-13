@@ -58,7 +58,7 @@ def main():
     from src.backend.graphs.ingest import run_ingest
     from src.backend.routers.searches import create_search
     from src.backend.schemas import SearchRequest
-    services.require_gemini()
+    services.require_models()
     db.init_db()
     low,high=config.RECOMMENDED_BATCH_LIMIT
     report={"status":"running","input":str(args.input),"requested":args.limit,

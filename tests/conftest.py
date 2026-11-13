@@ -29,6 +29,7 @@ def model_doubles(isolated, monkeypatch):
             return [[1., 0., 0.] for _ in texts]
     monkeypatch.setattr(services, "embeddings", lambda: FakeEmbeddings())
     monkeypatch.setattr(services, "require_gemini", lambda: None)
+    monkeypatch.setattr(services, "require_models", lambda: None)
     monkeypatch.setattr(services, "parse_query", lambda query: {
         "skills": ["Python", "FastAPI"], "min_years": 3})
     monkeypatch.setattr(services, "explain_match", lambda cv, criteria, result: "Fixture explanation")

@@ -35,6 +35,19 @@ class ContactRedactionTests(unittest.TestCase):
         text = "C++ and Python 3.11; +5 years, 2020-2024; 100000 records."
         self.assertEqual(redact_contacts(text), (text, {}))
 
+    def test_phone_redaction_keeps_number_after_sentence_end(self):
+        cases = {
+            "+1 555 123 4567. 6 years of experience": "[REDACTED_PHONE]. 6 years of experience",
+            "Phone: +84 912 345 678. 3 years Python": "[REDACTED_PHONE]. 3 years Python",
+            "0912 345 678. 4 years Java": "[REDACTED_PHONE]. 4 years Java",
+            "+1 (555) 123-4567, 2 years": "[REDACTED_PHONE], 2 years",
+        }
+        for text, expected in cases.items():
+            with self.subTest(text=text):
+                cleaned, counts = redact_contacts(text)
+                self.assertEqual(cleaned, expected)
+                self.assertEqual(counts, {"phone": 1})
+
     def test_labelled_local_phone_and_filters_are_idempotent(self):
         text = "Mobile: 0901 234 567; Skype: demo.person; www.example.org/me"
         cleaned, counts = redact_contacts(text)
@@ -71,7 +84,7 @@ class ContactRedactionTests(unittest.TestCase):
             {"cv_id": item["cv_id"], "status": "ready"} for item in items])
         backend = types.ModuleType("src.backend")
         backend.db = database
-        backend.services = types.SimpleNamespace(require_gemini=Mock(),
+        backend.services = types.SimpleNamespace(require_models=Mock(),
             model_settings=Mock(return_value={"provider": "google_gemini"}),
             has_vector=Mock(side_effect=lambda cv_id: cv_id == "filtered"))
         searches = types.ModuleType("src.backend.routers.searches")

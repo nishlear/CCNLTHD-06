@@ -25,14 +25,31 @@ class GeminiServiceTests(unittest.TestCase):
     def setUp(self):
         settings = types.ModuleType("src.backend.config")
         settings.DEFAULT_TOP_K, settings.MAX_TOP_K = 10, 20
-        settings.GEMINI_CHAT_MODEL = "gemini-3.5-flash-lite"
+        settings.CHAT_MODEL = "gemini-3.5-flash-lite"
+        settings.CHAT_PROVIDER = "gemini"
+        settings.CLOUD_CHAT_MODELS = {"gemini-3.5-flash-lite": {"provider": "gemini", "price": (0.30, 2.50)},
+                                      "deepseek-flash": {"provider": "deepseek", "price": (0.30, 1.20),
+                                                         "extra_body": {"thinking": {"type": "disabled"}}},
+                                      "gpt-6-luna": {"provider": "openai", "price": (0.10, 0.50),
+                                                     "extra_body": {"reasoning_effort": "none"}}}
+        settings.CLOUD_CHAT_MODELS["gemini-3.5-flash-lite"]["thinking_level"] = "MINIMAL"
+        settings.CLOUD_CHAT_MODELS["qwen3.8-27b"] = {
+            "provider": "vllm", "price": (0.0, 0.0),
+            "extra_body": {"chat_template_kwargs": {"enable_thinking": False}}}
+        settings.OPENAI_COMPAT_PROVIDERS = {
+            "deepseek": ("https://api.deepseek.com", "DEEPSEEK_API_KEY", True),
+            "openai": ("https://api.openai.com/v1", "OPENAI_API_KEY", True),
+            "vllm": ("http://127.0.0.1:8022/v1", "VLLM_API_KEY", False)}
         settings.OLLAMA_CHAT_MODEL = "qwen2.5:3b"
-        settings.GEMINI_EMBEDDING_MODEL = "gemini-embedding-2"
-        settings.GEMINI_EMBEDDING_DIMENSIONS = 768
+        settings.EMBEDDING_MODEL = "gemini-embedding-2"
+        settings.EMBEDDING_PROVIDER = "gemini"
+        settings.EMBEDDING_DIMENSIONS = 768
+        settings.CHAT_RPM = 12
         settings.GEMINI_TIMEOUT_SECONDS = 30
         settings.GEMINI_MAX_RETRIES = 1
-        settings.GEMINI_MAX_RPM = 12
+        settings.GEMINI_MAX_RPM = 10
         settings.TEMPERATURE = 0.0
+        settings.CHAT_MAX_OUTPUT_TOKENS = 1024
         settings.OLLAMA_BASE_URL = "http://ollama.test:11434"
         settings.OLLAMA_KEEP_ALIVE = "30m"
         settings.OLLAMA_NUM_CTX = 4096
@@ -63,6 +80,7 @@ class GeminiServiceTests(unittest.TestCase):
         sdk_types.HttpOptions = lambda **kwargs: kwargs
         sdk_types.HttpRetryOptions = lambda **kwargs: kwargs
         sdk_types.GenerateContentConfig = lambda **kwargs: kwargs
+        sdk_types.ThinkingConfig = lambda **kwargs: kwargs
         google.genai, genai.types = genai, sdk_types
         return genai, {"google": google, "google.genai": genai, "google.genai.types": sdk_types}
 
@@ -121,6 +139,7 @@ class GeminiServiceTests(unittest.TestCase):
         self.assertEqual(kwargs["config"]["temperature"], 0.0)
         self.assertIn("properties", kwargs["config"]["response_json_schema"])
         self.assertIn("JSON object", kwargs["config"]["system_instruction"])
+        self.assertEqual(kwargs["config"]["thinking_config"], {"thinking_level": "MINIMAL"})
 
     def test_pacer_spaces_calls_five_seconds_apart_at_12_rpm(self):
         clock = Mock(return_value=100.0)
@@ -189,6 +208,148 @@ class GeminiServiceTests(unittest.TestCase):
             with self.assertRaises(FakeAPIError):
                 self.services.extract_cv("CV", [])
         post.assert_not_called()
+
+    def use_openai_compat(self, model, provider):
+        self.settings.CHAT_MODEL, self.settings.CHAT_PROVIDER = model, provider
+
+    def _http_response(self, content):
+        body = json.dumps({"choices": [{"message": {"content": content}}],
+                           "usage": {"prompt_tokens": 12, "completion_tokens": 4}}).encode()
+        response = Mock()
+        response.read.return_value = body
+        response.__enter__ = Mock(return_value=response)
+        response.__exit__ = Mock(return_value=False)
+        return response
+
+    def test_openai_compatible_providers_send_json_mode_to_their_endpoint(self):
+        for model, provider, env, url, no_thinking in (
+                ("deepseek-flash", "deepseek", "DEEPSEEK_API_KEY", "https://api.deepseek.com/chat/completions",
+                 {"thinking": {"type": "disabled"}}),
+                ("gpt-6-luna", "openai", "OPENAI_API_KEY", "https://api.openai.com/v1/chat/completions",
+                 {"reasoning_effort": "none"})):
+            self.use_openai_compat(model, provider)
+            urlopen = Mock(return_value=self._http_response('{"skills": ["Python"]}'))
+            with self.subTest(model=model), patch.dict(os.environ, {env: "test-key"}, clear=True), \
+                    patch("urllib.request.urlopen", urlopen):
+                out = self.services.structured(self.services.SearchCriteria, "Extract criteria", {"query": "Python"})
+            self.assertEqual(out.skills, ["Python"])
+            request = urlopen.call_args.args[0]
+            body = json.loads(request.data)
+            self.assertEqual(request.full_url, url)
+            self.assertEqual(request.get_header("Authorization"), "Bearer test-key")
+            self.assertEqual(body["model"], model)
+            self.assertEqual(body["response_format"], {"type": "json_object"})
+            self.assertEqual(body["temperature"], 0.0)
+            self.assertIn("JSON Schema", body["messages"][0]["content"])
+            for key, value in no_thinking.items():
+                self.assertEqual(body[key], value)
+            cap = "max_completion_tokens" if provider == "openai" else "max_tokens"
+            self.assertEqual(body[cap], 1024)
+
+    def test_vllm_needs_no_key_and_disables_qwen_thinking(self):
+        self.use_openai_compat("qwen3.8-27b", "vllm")
+        urlopen = Mock(return_value=self._http_response('{"skills": ["Go"]}'))
+        with patch.dict(os.environ, {}, clear=True), patch("urllib.request.urlopen", urlopen):
+            out = self.services.structured(self.services.SearchCriteria, "Extract criteria", {"query": "Go"})
+        self.assertEqual(out.skills, ["Go"])
+        request = urlopen.call_args.args[0]
+        self.assertEqual(request.full_url, "http://127.0.0.1:8022/v1/chat/completions")
+        self.assertIsNone(request.get_header("Authorization"))
+        body = json.loads(request.data)
+        self.assertEqual(body["model"], "qwen3.8-27b")
+        self.assertEqual(body["chat_template_kwargs"], {"enable_thinking": False})
+
+    def test_last_call_stats_records_pacing_wait_and_tokens(self):
+        self.services.gemini_pacer = Mock(return_value=Mock(acquire=Mock(return_value=2.5)))
+        _, modules = self.sdk_modules()
+        client = self.gemini_client(text='{"skills": ["Python"]}')
+        with patch.dict(sys.modules, modules), \
+                patch.object(self.services, "chat_client", return_value=client):
+            self.services.cloud_json(self.services.SearchCriteria, "Extract criteria", {"query": "Python"})
+        self.assertEqual(self.services.last_call_stats.get(), {
+            "model": "gemini-3.5-flash-lite", "wait_s": 2.5, "input_tokens": 10, "output_tokens": 5})
+        self.use_openai_compat("qwen3.8-27b", "vllm")
+        urlopen = Mock(return_value=self._http_response('not json'))
+        with patch.dict(os.environ, {}, clear=True), patch("urllib.request.urlopen", urlopen):
+            with self.assertRaises(ValueError):
+                self.services.cloud_json(self.services.SearchCriteria, "Extract criteria", {"query": "Go"})
+        # Usage is still recorded when the reply fails to parse.
+        self.assertEqual(self.services.last_call_stats.get(), {
+            "model": "qwen3.8-27b", "wait_s": 2.5, "input_tokens": 12, "output_tokens": 4})
+
+    def test_output_hitting_the_token_cap_is_an_error(self):
+        self.use_openai_compat("qwen3.8-27b", "vllm")
+        body = json.dumps({"choices": [{"finish_reason": "length",
+                                        "message": {"content": '{"skills": ["Go", "Go", "Go"'}}]}).encode()
+        response = self._http_response("unused")
+        response.read.return_value = body
+        with patch.dict(os.environ, {}, clear=True), patch("urllib.request.urlopen", Mock(return_value=response)):
+            with self.assertRaisesRegex(ValueError, "token cap"):
+                self.services.structured(self.services.SearchCriteria, "Extract criteria", {"query": "Go"})
+
+    def test_model_specific_base_url_overrides_the_provider_url(self):
+        self.settings.CLOUD_CHAT_MODELS["qwen3.5-2b"] = {
+            "provider": "vllm", "price": (0.0, 0.0), "base_url": "http://127.0.0.1:8024/v1/",
+            "extra_body": {"chat_template_kwargs": {"enable_thinking": False}}}
+        self.use_openai_compat("qwen3.5-2b", "vllm")
+        urlopen = Mock(return_value=self._http_response('{"skills": ["Go"]}'))
+        with patch.dict(os.environ, {}, clear=True), patch("urllib.request.urlopen", urlopen):
+            self.services.structured(self.services.SearchCriteria, "Extract criteria", {"query": "Go"})
+        self.assertEqual(urlopen.call_args.args[0].full_url, "http://127.0.0.1:8024/v1/chat/completions")
+
+    def test_key_list_prompt_and_sampling_override_for_small_models(self):
+        self.settings.CLOUD_CHAT_MODELS["qwen3.5-4b"] = {
+            "provider": "vllm", "price": (0.0, 0.0), "prompt": "keys",
+            "extra_body": {"temperature": 0.7, "presence_penalty": 1.5}}
+        self.use_openai_compat("qwen3.5-4b", "vllm")
+        urlopen = Mock(return_value=self._http_response('{"skills": ["Go"]}'))
+        with patch.dict(os.environ, {}, clear=True), patch("urllib.request.urlopen", urlopen):
+            self.services.structured(self.services.SearchCriteria, "Extract criteria", {"query": "Go"})
+        body = json.loads(urlopen.call_args.args[0].data)
+        system = body["messages"][0]["content"]
+        self.assertIn("skills (array of strings)", system)
+        self.assertNotIn("JSON Schema", system)
+        self.assertEqual((body["temperature"], body["presence_penalty"]), (0.7, 1.5))
+
+    def test_require_models_checks_keys_of_configured_providers(self):
+        self.use_openai_compat("deepseek-flash", "deepseek")
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "g"}, clear=True):
+            with self.assertRaises(self.services.ConfigurationError):
+                self.services.require_models()
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "g", "DEEPSEEK_API_KEY": "d"}, clear=True):
+            self.services.require_models()
+        self.settings.EMBEDDING_PROVIDER, self.settings.EMBEDDING_MODEL = "openai", "text-embedding-3-small"
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "g", "DEEPSEEK_API_KEY": "d"}, clear=True):
+            with self.assertRaises(self.services.ConfigurationError):
+                self.services.require_models()
+        self.use_openai_compat("qwen3.8-27b", "vllm")
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "o"}, clear=True):
+            self.services.require_models()  # no Gemini key needed: neither model is Gemini
+
+    def test_unpaced_models_skip_the_shared_pacer(self):
+        self.settings.CHAT_RPM = None
+        with patch.object(self.services, "_sleep") as sleep:
+            self.assertEqual(self.services.SharedPacingLimiter().acquire(), 0.0)
+        sleep.assert_not_called()
+
+    def test_openai_compatible_provider_requires_its_own_key(self):
+        self.use_openai_compat("deepseek-flash", "deepseek")
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "gemini-key"}, clear=True):
+            with self.assertRaises(self.services.ConfigurationError):
+                self.services.structured(self.services.SearchCriteria, "Extract criteria", {"query": "Python"})
+
+    def test_openai_compatible_429_and_timeout_reroute_to_ollama(self):
+        import urllib.error
+        self.use_openai_compat("gpt-6-luna", "openai")
+        record = json.dumps({"name": "A", "role": "R", "skills": ["Go"], "exp_yrs": 2, "edu": "", "summary": ""})
+        for error in (urllib.error.HTTPError("u", 429, "Too Many Requests", {}, None),
+                      urllib.error.URLError(TimeoutError("timed out")), TimeoutError("read")):
+            post = Mock(return_value=self._ollama_response(record))
+            with self.subTest(error=repr(error)), patch.dict(os.environ, {"OPENAI_API_KEY": "k"}, clear=True), \
+                    patch("urllib.request.urlopen", Mock(side_effect=error)), \
+                    patch.object(self.services, "_ollama_post", post):
+                _, source = self.services.extract_cv("Go CV", [])
+            self.assertEqual(source, "ollama")
 
     def test_ollama_keep_alive_minus_one_is_sent_as_integer(self):
         self.settings.OLLAMA_KEEP_ALIVE = "-1"

@@ -1,0 +1,30 @@
+---
+config:
+  flowchart:
+    curve: linear
+---
+graph TD;
+	__start__([<p>__start__</p>]):::first
+	parse_pdf(parse_pdf)
+	preprocess(preprocess)
+	extract(extract)
+	validate(validate)
+	cache_extraction(cache_extraction)
+	mark_failed(mark_failed)
+	__end__([<p>__end__</p>]):::last
+	__start__ -.-> parse_pdf;
+	__start__ -.-> preprocess;
+	extract -.-> mark_failed;
+	extract -.-> validate;
+	parse_pdf -.-> mark_failed;
+	parse_pdf -.-> preprocess;
+	preprocess -.-> extract;
+	preprocess -.-> mark_failed;
+	preprocess -.-> validate;
+	validate -.-> cache_extraction;
+	validate -.-> mark_failed;
+	cache_extraction --> __end__;
+	mark_failed --> __end__;
+	classDef default fill:#f2f0ff,line-height:1.2
+	classDef first fill-opacity:0
+	classDef last fill:#bfb6fc
