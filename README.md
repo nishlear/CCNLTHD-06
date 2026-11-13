@@ -27,7 +27,40 @@ uv run uvicorn src.backend.main:app --reload
 
 `uv sync` resolves the new dependencies and refreshes `uv.lock`; commit the refreshed lock after resolution. The Docker build also allows lock refresh when project metadata changes.
 
+<<<<<<< Updated upstream
 ## Implemented workflows
+=======
+**Windows launcher**
+
+Double-click `run.bat`, or run it from PowerShell:
+
+```powershell
+.\run.bat
+```
+
+The launcher works from any working directory. It creates `.env` from the example
+only if missing, prepares Python dependencies with `uv` when needed (including
+the Corpus tools), starts local Ollama if necessary, downloads the configured
+fallback model if missing, and opens the app after its health check passes.
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/) and
+[Ollama](https://ollama.com/download/windows) first. Keep your provider API keys
+in `.env`; the launcher does not replace an existing file or make cloud model calls.
+
+Keep the launcher window open while using the app. Press **Ctrl+C** to stop the
+backend started by the launcher; Ollama stays running. If JD Matching is already
+running on the selected port, the launcher opens that instance instead.
+Server logs are saved under `data/logs/`.
+
+```powershell
+.\run.bat -Port 8001              # Use another port
+.\run.bat -NoBrowser              # Start without opening a browser
+.\run.bat -SyncDependencies       # Sync dependencies with uv.lock
+# Direct PowerShell entry point:
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-app.ps1
+```
+
+The app makes no model calls at startup. Without a key, health, stored CVs and search history still work; upload and new searches return HTTP 503.
+>>>>>>> Stashed changes
 
 - **Ingest:** two phases per bounded input batch. Phase 1 uses `Send(process_cv)` for up to four PDF/text workers: regex contact redaction, whitespace cleanup, one paced Gemini extraction, validation, and a committed SQLite extraction cache. A 429/timeout switches immediately to the pinned Ollama model; invalid output fails the record without another cloud call. A LangGraph barrier waits for every phase-1 branch before phase 2 embeds groups of up to 20 compact profiles in one request and bulk upserts them into Chroma. Each ready checkpoint is committed individually. Failed embedding runs reuse the extraction cache on restart. Threads and processes sharing `app.db` serialize ingest phases with an OS file lock; all application chat calls share a SQLite 12-RPM pacer.
 - **Search:** parse a free-text query into criteria, retrieve up to 20 vectors, score candidates in parallel, rank by descending score then ascending CV ID, retain `top_k`, and explain only scores at least 0.5. Invalid query extraction falls back to semantic search. Stale/failed CVs are omitted; an explanation error leaves `reasons=null` and preserves ranking. Retrieval failure marks the search failed.
